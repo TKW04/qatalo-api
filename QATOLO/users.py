@@ -23,18 +23,6 @@ def users_routes(path, method, event):
         elif method == 'PUT':
             return update_user(username, event)
 
-    # match_inactive = re.fullmatch(r'/users/inactive/([^/]+)', path)
-    # if match_inactive:
-    #     username = match_inactive.group(1)
-    #     if method == 'PUT':
-    #         return inactive_user(username)
-
-    # match_active = re.fullmatch(r'/users/active/([^/]+)', path)
-    # if match_active:
-    #     username = match_active.group(1)
-    #     if method == 'PUT':
-    #         return active_user(username)
-
     return {
         'statusCode': 404,
         'body': 'Ruta no encontrada'
