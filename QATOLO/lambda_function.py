@@ -1,12 +1,13 @@
 import base64
 import json
 
+from users import users_routes
 from paddle import paddle_routes
 
 
 def lambda_handler(event, context):
     try:
-
+        print("iniciando")
         headers = event.get('headers', {})
         auth_header = headers.get(
             'Authorization') or headers.get('authorization')
@@ -21,6 +22,9 @@ def lambda_handler(event, context):
             'http', {}).get('method', '')
         if "paddle" in path:
             return paddle_routes(event)
+        if "users" in path:
+            print("entro al if users")
+            return users_routes(path, method, event)
 
     except Exception as e:
         print(f"Error processing request: {str(e)}")

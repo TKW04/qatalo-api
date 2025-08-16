@@ -1,17 +1,16 @@
 import json
 import re
+from zoneinfo import ZoneInfo
 import boto3
 import os
-
+from datetime import datetime
 
 cognito = boto3.client('cognito-idp')
 USER_POOL_ID = os.environ.get('USER_POOL_ID')
 
 
 def users_routes(path, method, event):
-
-    # if path == "/users" and method == 'GET':
-    #     return list_users()
+    print(f"Processing users route: {path} with method: {method}")
     if path == "/users" and method == 'POST':
         return register_user(event=event)
 
@@ -29,47 +28,6 @@ def users_routes(path, method, event):
     }
 
 
-# def list_users():
-#     try:
-#         response = cognito.list_users(UserPoolId=USER_POOL_ID)
-#         users = []
-
-#         for user in response['Users']:
-#             user_response = Users(id=None, email=None, given_name=None,
-#                                   family_name=None, role=None, status=user['Enabled'])
-#             for attr in user['Attributes']:
-#                 name = attr['Name']
-#                 value = attr['Value']
-
-#                 if name == 'sub':
-#                     user_response.id = value
-#                 elif name == 'email':
-#                     user_response.email = value
-#                 elif name == 'given_name':
-#                     user_response.given_name = value
-#                 elif name == 'family_name':
-#                     user_response.family_name = value
-#                 elif name == 'custom:role':
-#                     user_response.role = value
-#             # if user_response.role != "ROOT":
-#             users.append(user_response.__dict__)
-#         return {
-#             'statusCode': 200,  # No uses 204
-#             'headers': {
-#                 'Access-Control-Allow-Origin': '*',
-#                 'Access-Control-Allow-Headers': '*',
-#                 'Access-Control-Allow-Methods': '*'
-#             },
-#             'body': json.dumps(users, default=str)
-#         }
-#     except Exception as e:
-#         print(json.dumps({"event": "list_users", "Error": str(e)}))
-#         return {
-#             'statusCode': 500,
-#             'headers': {'Access-Control-Allow-Origin': '*'}
-#         }
-
-
 def get_user(username):
     try:
         user = cognito.admin_get_user(
@@ -85,7 +43,6 @@ def get_user(username):
                          "email": attrs.get('email'),
                          "given_name": attrs.get('given_name'),
                          "family_name": attrs.get('family_name'),
-                         "phone_number": attrs.get('phone_number'),
                          "price_id": attrs.get('custom:price_id'),
                          "transaction_id": attrs.get('custom:transaction_id'),
                          "transaction_status": attrs.get('custom:transaction_status'),
@@ -161,11 +118,16 @@ def register_user(event):
             UserPoolId=USER_POOL_ID,
             Username=body.get('email'),
             UserAttributes=[
-                {"Name": "email", "Value": body.get('email'), },
+                {"Name": "email", "Value": body.get('email')},
                 {"Name": "email_verified", "Value": 'true'},
                 {"Name": "given_name", "Value": body.get('given_name')},
                 {"Name": "family_name", "Value": body.get('family_name')},
-                {"Name": "phone_number", "Value": body.get('phone_number')}
+                {"Name": "custom:price_id", "Value": "0"},
+                {"Name": "custom:price_id", "Value": "0"},
+                {"Name": "custom:transaction_id", "Value": "0"},
+                {"Name": "custom:transaction_status", "Value": "pending"},
+                {"Name": "custom:due_date", "Value": datetime.now(ZoneInfo("America/Santo_Domingo")).strftime("%Y-%m-%d")}
+
             ],
             MessageAction="SUPPRESS"  # No enviar email
 
@@ -189,54 +151,6 @@ def register_user(event):
 
     except Exception as e:
         print(json.dumps({"event": "create_user", "Error": str(e)}))
-        return {
-            'statusCode': 500,
-            'headers': {'Access-Control-Allow-Origin': '*'},
-            'body': json.dumps({'message': str(e)})
-        }
-
-
-def active_user(username):
-    try:
-
-        # Ejecutar la actualización en Cognito
-        cognito.admin_enable_user(
-            UserPoolId=USER_POOL_ID,
-            Username=username
-        )
-
-        return {
-            'statusCode': 200,
-            'headers': {'Access-Control-Allow-Origin': '*'},
-            'body': json.dumps({'message': 'Usuario actualizado correctamente'})
-        }
-
-    except Exception as e:
-        print(json.dumps({"event": "active_user", "Error": str(e)}))
-        return {
-            'statusCode': 500,
-            'headers': {'Access-Control-Allow-Origin': '*'},
-            'body': json.dumps({'message': str(e)})
-        }
-
-
-def inactive_user(username):
-    try:
-
-        # Ejecutar la actualización en Cognito
-        cognito.admin_disable_user(
-            UserPoolId=USER_POOL_ID,
-            Username=username
-        )
-
-        return {
-            'statusCode': 200,
-            'headers': {'Access-Control-Allow-Origin': '*'},
-            'body': json.dumps({'message': 'Usuario actualizado correctamente'})
-        }
-
-    except Exception as e:
-        print(json.dumps({"event": "inactive_user", "Error": str(e)}))
         return {
             'statusCode': 500,
             'headers': {'Access-Control-Allow-Origin': '*'},
