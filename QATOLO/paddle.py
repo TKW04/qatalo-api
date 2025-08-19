@@ -30,28 +30,18 @@ def get_products():
         prices_resp.raise_for_status()
         prices_data = prices_resp.json().get("data", [])
 
-        # Si quieres también traer datos de producto detallados, puedes llamar a /products
-        products_resp = requests.get(
-            f"{PADDLE_API_BASE}/products", headers=HEADERS, timeout=10)
-        products_resp.raise_for_status()
-        products_data = products_resp.json().get("data", [])
-
-        # Crear un dict para buscar productos por id
-        product_lookup = {p["id"]: p for p in products_data}
-
         # 2. Combinar precios con productos
         combined = []
         for price in prices_data:
-            product_id = price.get("product_id")
-            product_info = product_lookup.get(product_id, {})
             combined.append({
-                "product_id": product_id,
-                "product_name": product_info.get("name"),
-                "product_description": product_info.get("description"),
                 "price_id": price.get("id"),
+                "product_id": price.get("product_id", ""),
+                "product_name": price.get("name", ""),
                 "currency": price.get("unit_price", {}).get("currency_code"),
-                "unit_price": price.get("unit_price").get("amount") if price.get("unit_price") else None,
-                "billing_interval": price.get("billing_interval") or "one_time"
+                "unit_price": int(price.get("unit_price").get("amount"))/100 if price.get("unit_price") else 0,
+                "billing_cycle": price.get("billing_cycle").get("interval") if price.get("billing_cycle") else None,
+                "trial_period_interval": price.get("trial_period", {}).get("interval") if price.get("trial_period") else None,
+                "trial_period_frequency": price.get("trial_period", {}).get("frequency") if price.get("trial_period") else None
             })
 
         return {
