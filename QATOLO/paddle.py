@@ -17,9 +17,44 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-# -----------------------------
-# Helper: obtener precio
-# -----------------------------
+
+def paddle_routes(event, user_name, method, path):
+
+    # obtener productos
+    if path.endswith("/paddle/products") and method.upper() == "GET":
+        return get_products()
+
+    # crear-checkout
+    if path.endswith("/paddle/checkout") and method.upper() == "POST":
+        body = json.loads(event.get("body") or "{}")
+        price_id = body.get("price_id")
+        email = user_name
+        if not price_id:
+            return {"statusCode": 400, "body": json.dumps({"error": "missing price_id"})}
+
+        try:
+            return create_checkout(price_id, email)
+            # return {"statusCode": 200, "body": json.dumps({"checkout_url": checkout_url})}
+        except Exception as e:
+            return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
+
+    # webhook
+    if path.endswith("/paddle/webhook") and method.upper() == "POST":
+        print("entro webhook")
+
+        raw_body = get_raw_body_from_event(event)
+        headers = event.get("headers", {}) or {}
+        ok, err = verify_paddle_signature(headers, raw_body, PADDLE_WEBHOOK_SECRET)
+        if not ok:
+            return {"statusCode": 400, "body": json.dumps({"ok": False, "error": err})}
+
+        # ✅ firma válida: procesa el JSON
+        payload = json.loads(raw_body.decode("utf-8"))
+        print(payload)
+        # ... tu lógica aquí ...
+        return {"statusCode": 200, "body": json.dumps({"ok": True})}
+
+    return {"statusCode": 404, "body": "Not found"}
 
 
 def get_products():
@@ -41,7 +76,8 @@ def get_products():
                 "unit_price": int(price.get("unit_price").get("amount"))/100 if price.get("unit_price") else 0,
                 "billing_cycle": price.get("billing_cycle").get("interval") if price.get("billing_cycle") else None,
                 "trial_period_interval": price.get("trial_period", {}).get("interval") if price.get("trial_period") else None,
-                "trial_period_frequency": price.get("trial_period", {}).get("frequency") if price.get("trial_period") else None
+                "trial_period_frequency": price.get("trial_period", {}).get("frequency") if price.get("trial_period") else None,
+                "description": price.get("description", "")
             })
 
         return {
@@ -55,35 +91,26 @@ def get_products():
             "body": json.dumps({"error": str(e)})
         }
 
-# -----------------------------
-# Helper: crear transacción -> checkout.url
-# -----------------------------
-
 
 def create_checkout(price_id, email):
-    headers = {
-        "Authorization": f"Bearer {PADDLE_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "items": [
-            {
-                "price_id": price_id,
-                "quantity": 1
-            }
-        ],
-        "customer": {
-            "email": email
-        },
-        "success_url": "https://tusitio.com/pago-exitoso"
-    }
+    resp = requests.post(
+        f"{PADDLE_API_BASE}/transactions",
+        headers={"Authorization": f"Bearer {PADDLE_API_KEY}", },
+        json={
+            "items": [
+                {"price_id": price_id, "quantity": 1}
+            ],
+            "customer_email": email,
+            "success_url": f"{os.environ.get('FRONTEND_URL', 'https://example.com')}/checkout/success",
+            "cancel_url": f"{os.environ.get('FRONTEND_URL', 'https://example.com')}/checkout/cancel",
+            "metadata": {"user_id": email}
+        }
+    )
 
-    resp = requests.post(f"{PADDLE_API_BASE}/transactions",
-                         headers=headers, json=payload)
-    resp.raise_for_status()
+    checkout_url = resp.json()["data"]
+    checkout_url = os.environ.get(
+        "PADDLE_PAY_URL", "") + f"/{os.environ.get('PADDLE_HSC_TOKEN', '')}/?transaction_id={checkout_url.get('id')}"
 
-    data = resp.json()
-    checkout_url = data["data"]["checkout"]["url"]
     return {
         "statusCode": 200,
         "body": json.dumps({"checkout_url": checkout_url})
@@ -94,98 +121,68 @@ def create_checkout(price_id, email):
 # -----------------------------
 
 
-def verify_paddle_signature(headers, raw_body, secret, tolerance_seconds=5):
-    # 1) obtener header
+def get_raw_body_from_event(event):
+    """Devuelve los bytes EXACTOS que Paddle firmó."""
+    body = event.get("body", "")
+    if event.get("isBase64Encoded"):
+        return base64.b64decode(body)
+    # Importante: NO json.dumps ni normalizar; devolver tal cual:
+    return body.encode("utf-8") if isinstance(body, str) else body
+
+
+def parse_paddle_signature(sig_header: str):
+    """
+    Soporta espacios y múltiples h1: ej 'ts=1671552777; h1=abc; h1=def'
+    Devuelve (ts:int, [h1a, h1b, ...])
+    """
+    if not sig_header:
+        return None, []
+    ts = None
+    h1_list = []
+    for part in sig_header.split(";"):
+        part = part.strip()
+        if "=" not in part:
+            continue
+        k, v = part.split("=", 1)
+        k = k.strip().lower()
+        v = v.strip()
+        if k == "ts":
+            try:
+                ts = int(v)
+            except:
+                return None, []
+        elif k == "h1":
+            h1_list.append(v)
+    return ts, h1_list
+
+
+def verify_paddle_signature(headers, raw_body: bytes, secret: str, tolerance_seconds=300):
+    # 1) Header (case-insensitive)
     sig_header = headers.get(
         "Paddle-Signature") or headers.get("paddle-signature")
     if not sig_header:
         return False, "no signature header"
 
-    # 2) parsear ts y h1
-    kv = {}
-    for part in sig_header.split(";"):
-        if "=" in part:
-            k, v = part.split("=", 1)
-            kv[k] = v
-
-    ts = kv.get("ts")
-    h1 = kv.get("h1")
-    if not ts or not h1:
+    # 2) Parsear ts + TODOS los h1
+    ts, h1_list = parse_paddle_signature(sig_header)
+    if not ts or not h1_list:
         return False, "mal formato signature header"
 
-    # 3) comprobar timestamp (protege replay)
-    try:
-        ts_int = int(ts)
-    except:
-        return False, "timestamp invalido"
-    if abs(time.time() - ts_int) > tolerance_seconds:
+    # 3) Tolerancia anti-replay (más realista)
+    now = int(time.time())
+    if abs(now - ts) > tolerance_seconds:
         return False, "timestamp fuera de tolerancia"
 
-    # 4) construir signed_payload = "{ts}:{raw_body}"
-    # raw_body must be bytes (exact bytes Paddle sent)
-    if isinstance(raw_body, str):
-        raw_bytes = raw_body.encode("utf-8")
-    else:
-        raw_bytes = raw_body
+    # 4) signed_payload = f"{ts}:{raw_body}"
+    signed_payload = str(ts).encode("utf-8") + b":" + raw_body
 
-    signed_payload = ts.encode("utf-8") + b":" + raw_bytes
-
-    # 5) calcular HMAC-SHA256 con secret, comparar en timing-safe
-    computed = hmac.new(secret.encode('utf-8'),
+    # 5) HMAC-SHA256 con el secret del destino
+    computed = hmac.new(secret.encode("utf-8"),
                         signed_payload, hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(computed, h1):
-        return False, "firma invalida"
 
-    return True, None
+    # 6) Comparar contra cualquiera de los h1 (rotación de secret)
+    for h1 in h1_list:
+        if hmac.compare_digest(computed, h1):
+            return True, None
 
-
-def paddle_routes(event):
-    path = event.get("rawPath") or event.get("path", "")
-    method = event.get("requestContext", {}).get("http", {}).get(
-        "method") or event.get("httpMethod", "POST")
-
-    # obtener productos
-    if path.endswith("/paddle/products") and method.upper() == "GET":
-        return get_products()
-
-    # crear-checkout
-    if path.endswith("/paddle/create-checkout") and method.upper() == "POST":
-        body = json.loads(event.get("body") or "{}")
-        price_id = body.get("price_id")
-        email = body.get("email")
-        if not price_id:
-            return {"statusCode": 400, "body": json.dumps({"error": "missing price_id"})}
-
-        try:
-            checkout_url = create_checkout(price_id, email)
-            return {"statusCode": 200, "body": json.dumps({"checkout_url": checkout_url})}
-        except Exception as e:
-            return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
-
-    # webhook
-    if path.endswith("/paddle/webhook") and method.upper() == "POST":
-        # obtener raw body EXACTO
-        is_b64 = event.get("isBase64Encoded", False)
-        body_raw = base64.b64decode(event["body"]) if is_b64 else (
-            event["body"] or "").encode("utf-8")
-
-        ok, reason = verify_paddle_signature(
-            event.get("headers", {}), body_raw, PADDLE_WEBHOOK_SECRET)
-        if not ok:
-            return {"statusCode": 400, "body": json.dumps({"error": "signature_verification_failed", "reason": reason})}
-
-        # parsear JSON y procesar
-        payload = json.loads(body_raw.decode("utf-8"))
-        # Ejemplo: guardar `event_id` para idempotencia y luego hacer fulfilment si es transaction.completed
-        event_type = payload.get("event", {}).get(
-            "name") or payload.get("type") or payload.get("event_type")
-        event_id = payload.get("event", {}).get(
-            "id") or payload.get("event_id") or payload.get("id")
-
-        # TODO: almacenar event_id en DB y verificar duplicados
-        # ejemplo rapido: si event_type == "transaction.completed": provisionar user/product
-
-        # responder rápido
-        return {"statusCode": 200, "body": json.dumps({"success": True})}
-
-    return {"statusCode": 404, "body": "Not found"}
+    return False, "firma invalida"

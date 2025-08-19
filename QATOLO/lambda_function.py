@@ -7,7 +7,6 @@ from paddle import paddle_routes
 
 def lambda_handler(event, context):
     try:
-        print("iniciando")
         headers = event.get('headers', {})
         auth_header = headers.get(
             'Authorization') or headers.get('authorization')
@@ -21,9 +20,8 @@ def lambda_handler(event, context):
         method = event.get('requestContext', {}).get(
             'http', {}).get('method', '')
         if "paddle" in path:
-            return paddle_routes(event)
+            return paddle_routes(event, user_name=user_name, method=method, path=path)
         if "users" in path:
-            print("entro al if users")
             return users_routes(path, method, event)
 
     except Exception as e:
@@ -35,7 +33,11 @@ def lambda_handler(event, context):
 
 
 def decode_jwt_payload(token):
-    payload = token.split('.')[1]
-    padded = payload + '=' * (-len(payload) % 4)
-    decoded_bytes = base64.urlsafe_b64decode(padded)
-    return json.loads(decoded_bytes)
+    try:
+        payload = token.split('.')[1]
+        padded = payload + '=' * (-len(payload) % 4)
+        decoded_bytes = base64.urlsafe_b64decode(padded)
+        return json.loads(decoded_bytes)
+    except Exception as e:
+        print(f"Error decoding JWT payload: {str(e)}")
+        return {}
