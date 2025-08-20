@@ -5,12 +5,13 @@ import hmac
 import hashlib
 import base64
 import requests
+from paddle_billing.Notifications import Secret, Verifier
 
 PADDLE_API_KEY = os.environ['PADDLE_API_KEY']            # sandbox API key
 PADDLE_API_BASE = os.environ.get(
     'PADDLE_API_BASE', 'https://sandbox-api.paddle.com')
 # endpoint secret key from Paddle
-PADDLE_WEBHOOK_SECRET = os.environ['PADDLE_WEBHOOK_SECRET']
+# PADDLE_WEBHOOK_SECRET = os.environ['PADDLE_WEBHOOK_SECRET']
 
 HEADERS = {
     "Authorization": f"Bearer {PADDLE_API_KEY}",
@@ -41,18 +42,7 @@ def paddle_routes(event, user_name, method, path):
     # webhook
     if path.endswith("/paddle/webhook") and method.upper() == "POST":
         print("entro webhook")
-
-        raw_body = get_raw_body_from_event(event)
-        headers = event.get("headers", {}) or {}
-        ok, err = verify_paddle_signature(headers, raw_body, PADDLE_WEBHOOK_SECRET)
-        if not ok:
-            return {"statusCode": 400, "body": json.dumps({"ok": False, "error": err})}
-
-        # ✅ firma válida: procesa el JSON
-        payload = json.loads(raw_body.decode("utf-8"))
-        print(payload)
-        # ... tu lógica aquí ...
-        return {"statusCode": 200, "body": json.dumps({"ok": True})}
+        verify_paddle_signature(event)
 
     return {"statusCode": 404, "body": "Not found"}
 
@@ -121,68 +111,110 @@ def create_checkout(price_id, email):
 # -----------------------------
 
 
-def get_raw_body_from_event(event):
-    """Devuelve los bytes EXACTOS que Paddle firmó."""
-    body = event.get("body", "")
-    if event.get("isBase64Encoded"):
-        return base64.b64decode(body)
-    # Importante: NO json.dumps ni normalizar; devolver tal cual:
-    return body.encode("utf-8") if isinstance(body, str) else body
+# def get_raw_body_from_event(event):
+#     """Devuelve los bytes EXACTOS que Paddle firmó."""
+#     body = event.get("body", "")
+#     if event.get("isBase64Encoded"):
+#         return base64.b64decode(body)
+#     # Importante: NO json.dumps ni normalizar; devolver tal cual:
+#     return body.encode("utf-8") if isinstance(body, str) else body
 
 
-def parse_paddle_signature(sig_header: str):
-    """
-    Soporta espacios y múltiples h1: ej 'ts=1671552777; h1=abc; h1=def'
-    Devuelve (ts:int, [h1a, h1b, ...])
-    """
-    if not sig_header:
-        return None, []
-    ts = None
-    h1_list = []
-    for part in sig_header.split(";"):
-        part = part.strip()
-        if "=" not in part:
-            continue
-        k, v = part.split("=", 1)
-        k = k.strip().lower()
-        v = v.strip()
-        if k == "ts":
-            try:
-                ts = int(v)
-            except:
-                return None, []
-        elif k == "h1":
-            h1_list.append(v)
-    return ts, h1_list
+# def parse_paddle_signature(sig_header: str):
+#     """
+#     Soporta espacios y múltiples h1: ej 'ts=1671552777; h1=abc; h1=def'
+#     Devuelve (ts:int, [h1a, h1b, ...])
+#     """
+#     if not sig_header:
+#         return None, []
+#     ts = None
+#     h1_list = []
+#     for part in sig_header.split(";"):
+#         part = part.strip()
+#         if "=" not in part:
+#             continue
+#         k, v = part.split("=", 1)
+#         k = k.strip().lower()
+#         v = v.strip()
+#         if k == "ts":
+#             try:
+#                 ts = int(v)
+#             except:
+#                 return None, []
+#         elif k == "h1":
+#             h1_list.append(v)
+#     return ts, h1_list
 
 
-def verify_paddle_signature(headers, raw_body: bytes, secret: str, tolerance_seconds=300):
-    # 1) Header (case-insensitive)
-    sig_header = headers.get(
-        "Paddle-Signature") or headers.get("paddle-signature")
-    if not sig_header:
-        return False, "no signature header"
+# def verify_paddle_signature(headers, raw_body: bytes, secret: str, tolerance_seconds=300):
+#     # 1) Header (case-insensitive)
+#     sig_header = headers.get(
+#         "Paddle-Signature") or headers.get("paddle-signature")
+#     if not sig_header:
+#         return False, "no signature header"
 
-    # 2) Parsear ts + TODOS los h1
-    ts, h1_list = parse_paddle_signature(sig_header)
-    if not ts or not h1_list:
-        return False, "mal formato signature header"
+#     # 2) Parsear ts + TODOS los h1
+#     ts, h1_list = parse_paddle_signature(sig_header)
+#     if not ts or not h1_list:
+#         return False, "mal formato signature header"
 
-    # 3) Tolerancia anti-replay (más realista)
-    now = int(time.time())
-    if abs(now - ts) > tolerance_seconds:
-        return False, "timestamp fuera de tolerancia"
+#     # 3) Tolerancia anti-replay (más realista)
+#     now = int(time.time())
+#     if abs(now - ts) > tolerance_seconds:
+#         return False, "timestamp fuera de tolerancia"
 
-    # 4) signed_payload = f"{ts}:{raw_body}"
-    signed_payload = str(ts).encode("utf-8") + b":" + raw_body
+#     # 4) signed_payload = f"{ts}:{raw_body}"
+#     signed_payload = str(ts).encode("utf-8") + b":" + raw_body
 
-    # 5) HMAC-SHA256 con el secret del destino
-    computed = hmac.new(secret.encode("utf-8"),
-                        signed_payload, hashlib.sha256).hexdigest()
+#     # 5) HMAC-SHA256 con el secret del destino
+#     computed = hmac.new(secret.encode("utf-8"),
+#                         signed_payload, hashlib.sha256).hexdigest()
 
-    # 6) Comparar contra cualquiera de los h1 (rotación de secret)
-    for h1 in h1_list:
-        if hmac.compare_digest(computed, h1):
-            return True, None
+#     # 6) Comparar contra cualquiera de los h1 (rotación de secret)
+#     for h1 in h1_list:
+#         if hmac.compare_digest(computed, h1):
+#             return True, None
 
-    return False, "firma invalida"
+#     return False, "firma invalida"
+
+
+def verify_paddle_signature(event):
+    # 1. Obtener el body y headers del evento API Gateway
+    # API Gateway entrega el body como string
+    print(event)
+    raw_body = event.get("body", "")
+    headers = event.get("headers", {})
+
+    # 2. Crear instancia del verificador con tu secret
+    secret_key = os.environ.get("PADDLE_WEBHOOK_SECRET", "WEBHOOK_SECRET_KEY")
+    verifier = Verifier()
+
+    try:
+        # 3. Verificar integridad del request
+        integrity_check = verifier.verify(
+            {"headers": headers, "body": raw_body},  # el request esperado
+            Secret(secret_key)
+        )
+
+        if integrity_check:  # válido
+            print("Webhook verificado correctamente ✅")
+            body = json.loads(raw_body)
+            print(body)
+            # Aquí procesas la notificación
+            return {
+                "statusCode": 200,
+                "body": json.dumps({"message": "ok"})
+            }
+        else:
+            print("❌ Webhook no válido")
+            return {
+                "statusCode": 400,
+                "body": json.dumps({"message": "Invalid signature"})
+            }
+
+    except Exception as e:
+        print(f"Error verificando webhook: {e}")
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"message": "Internal error"})
+        }
