@@ -46,6 +46,7 @@ def get_user(username):
                          "price_id": attrs.get('custom:price_id'),
                          "transaction_id": attrs.get('custom:transaction_id'),
                          "transaction_status": attrs.get('custom:transaction_status'),
+                         "customer_id": attrs.get('custom:customer_id'),
                          "due_date": attrs.get('custom:due_date'),
                          "status": user['Enabled']}
 
@@ -122,7 +123,7 @@ def register_user(event):
                 {"Name": "email_verified", "Value": 'true'},
                 {"Name": "given_name", "Value": body.get('given_name')},
                 {"Name": "family_name", "Value": body.get('family_name')},
-                {"Name": "custom:price_id", "Value": "0"},
+                {"Name": "custom:customer_id", "Value": ""},
                 {"Name": "custom:price_id", "Value": "0"},
                 {"Name": "custom:transaction_id", "Value": "0"},
                 {"Name": "custom:transaction_status", "Value": "pending"},
