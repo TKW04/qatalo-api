@@ -26,23 +26,8 @@ def paddle_routes(event, user_name, method, path):
     if path.endswith("/paddle/products") and method.upper() == "GET":
         return get_products()
 
-    # crear-checkout
-    if path.endswith("/paddle/checkout") and method.upper() == "POST":
-        body = json.loads(event.get("body") or "{}")
-        price_id = body.get("price_id")
-        email = user_name
-        if not price_id:
-            return {"statusCode": 400, "body": json.dumps({"error": "missing price_id"})}
-
-        try:
-            return create_checkout(price_id, email)
-            # return {"statusCode": 200, "body": json.dumps({"checkout_url": checkout_url})}
-        except Exception as e:
-            return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
-
     # webhook
     if path.endswith("/paddle/webhook") and method.upper() == "POST":
-        print("entro webhook")
         verify_paddle_signature(event)
 
     return {"statusCode": 404, "body": "Not found"}
@@ -83,37 +68,6 @@ def get_products():
         }
 
 
-def create_checkout(price_id, email):
-    resp = requests.post(
-        f"{PADDLE_API_BASE}/transactions",
-        headers={"Authorization": f"Bearer {PADDLE_API_KEY}", },
-        json={
-            "items": [
-                {"price_id": price_id, "quantity": 1}
-            ],
-            "customer_email": email,
-            "success_url": f"{os.environ.get('FRONTEND_URL', 'https://example.com')}/checkout/success",
-            "cancel_url": f"{os.environ.get('FRONTEND_URL', 'https://example.com')}/checkout/cancel",
-            "metadata": {"user_id": email}
-        }
-    )
-    try:
-        data = resp.json()["data"]
-        transaction_id = data.get('id')
-        update_user(email=email, transaction_id=transaction_id,
-                    transaction_status="pending", customer_id="", due_date="")
-
-        checkout_url = os.environ.get(
-            "PADDLE_PAY_URL", "") + f"/{os.environ.get('PADDLE_HSC_TOKEN', '')}/?transaction_id={transaction_id}"
-    except Exception as e:
-        print(f"Error al crear checkout: {e}")
-        return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
-    return {
-        "statusCode": 200,
-        "body": json.dumps({"checkout_url": checkout_url})
-    }
-
-
 def verify_paddle_signature(event):
 
     verifier = Verifier(300)
@@ -149,66 +103,70 @@ def verify_paddle_signature(event):
         return {"statusCode": 400, "body": json.dumps({"ok": False, "error": "invalid signature"})}
 
     # # 5) Firma válida → payload parseado
-    payload = json.loads(raw_body.get("data", {}), strict=False)
-    status = payload.get("status")
+    payload = json.loads(raw_body.decode(
+        "utf-8") if isinstance(raw_body, bytes) else raw_body)
+    data = payload.get('data', {})
+    status = data.get('status')
 
-    if status == "completed":
-        completed_event(payload)
-
-    # # --- tu lógica de negocio aquí ---
-    # event_type = payload.get("event_type") or payload.get(
-    #     "event", {}).get("type")
-    # print(f"Procesando evento {event_type}")
+    print(f"Payload recibido: {status}")
+    if status == "activated":
+        activated_event(data, status)
+    if status == "canceled":
+        canceled_event(data, status)
+    if status == "trialing":
+        trialing_event(data, status)
 
     return {"statusCode": 200, "body": json.dumps({"ok": True})}
 
 
-def completed_event(payload):
+def trialing_event(payload, status):
+    transaction_id = payload.get("id")
+    print(transaction_id)
+    customer_id = payload.get("customer_id")
+    print(customer_id)
+    user_id = payload.get("custom_data", {}).get("appUserId")
+    print(user_id)
+
+    # update_user(user_id=user_id, transaction_id=transaction_id,
+    #             transaction_status=status, customer_id=customer_id, due_date=None)
+
+
+def canceled_event(payload, status):
     transaction_id = payload.get("id")
     customer_id = payload.get("customer_id")
-    # email = get_user_by_transaction_id(transaction_id)
-    # due_date = payload.get("billing_period").get("ends_at")
-    # update_user(email=email, transaction_id=transaction_id,
-    #             transaction_status="completed", customer_id=customer_id, due_date=due_date)
+    user_id = payload.get("custom_data", {}).get("appUserId")
 
-    print(transaction_id)
-    print(f"customer_id: {customer_id}")
-    # print(f"email: {email}")
-    # print(f"due_date: {due_date}")
+    update_user(user_id=user_id, transaction_id=transaction_id,
+                transaction_status=status, customer_id=customer_id, due_date=None)
 
 
-def get_user_by_transaction_id(transaction_id):
-    try:
-
-        response = cognito.list_users(
-            UserPoolId=USER_POOL_ID,
-            Filter=f'custom:transaction_id = "{transaction_id}"'
-        )
-        return response.get("Users", [])[0] if response.get("Users") else {}
-    except Exception as e:
-        print(json.dumps(
-            {"event": "get_user_by_transaction_id", "Error": str(e)}))
-        return {
-            'statusCode': 500,
-            'headers': {'Access-Control-Allow-Origin': '*'},
-            'body': json.dumps({'message': str(e)})
-        }
+def activated_event(payload, status):
+    transaction_id = payload.get("id")
+    customer_id = payload.get("customer_id")
+    user_id = payload.get("custom_data", {}).get("appUserId")
+    due_date = payload.get("billing_period").get("ends_at")
+    update_user(user_id=user_id, transaction_id=transaction_id,
+                transaction_status=status, customer_id=customer_id, due_date=due_date)
 
 
-def update_user(email, transaction_id, transaction_status, customer_id, due_date):
+def update_user(user_id, transaction_id, transaction_status, customer_id, due_date):
     try:
         # Ejecutar la actualización en Cognito
+        userAttributes = [
+            {"Name": "custom:transaction_id",
+                "Value": transaction_id},
+            {"Name": "custom:transaction_status",
+                "Value": transaction_status},
+            {"Name": "custom:customer_id", "Value": customer_id}
+        ]
+        if due_date is not None:
+            userAttributes.append(
+                {"Name": "custom:due_date", "Value": due_date if due_date else ""})
+
         cognito.admin_update_user_attributes(
             UserPoolId=USER_POOL_ID,
-            Username=email,
-            UserAttributes=[
-                {"Name": "custom:transaction_id",
-                 "Value": transaction_id},
-                {"Name": "custom:transaction_status",
-                 "Value": transaction_status},
-                {"Name": "custom:customer_id", "Value": customer_id},
-                {"Name": "custom:due_date", "Value": due_date if due_date else ""}
-            ]
+            Username=user_id,
+            UserAttributes=userAttributes
         )
 
     except Exception as e:
