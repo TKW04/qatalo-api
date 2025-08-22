@@ -14,18 +14,21 @@ def lambda_handler(event, context):
         token = auth_header
         decoded = ""
         user_name = ""
+        user_id = ""
         if token is not None:
             decoded = decode_jwt_payload(token)
             user_name = decoded.get("email")
+            user_id = decoded.get("sub")
+
         path = event.get('rawPath', '')
         method = event.get('requestContext', {}).get(
             'http', {}).get('method', '')
         if "paddle" in path:
             return paddle_routes(event, user_name=user_name, method=method, path=path)
         if "users" in path:
-            return users_routes(path, method, event)
-        if "business" in path:
-            return business_routes(path, method, event)
+            return users_routes(path=path, method=method, event=event)
+        if "businesses" in path:
+            return business_routes(path=path, method=method, event=event, user_name=user_name, user_id=user_id)
 
     except Exception as e:
         print(f"Error processing request: {str(e)}")

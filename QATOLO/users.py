@@ -10,7 +10,7 @@ USER_POOL_ID = os.environ.get('USER_POOL_ID')
 
 
 def users_routes(path, method, event):
-    print(f"Processing users route: {path} with method: {method}")
+
     if path == "/users" and method == 'POST':
         return register_user(event=event)
 
@@ -53,7 +53,7 @@ def get_user(username):
         return {
             'statusCode': 200,
             'headers': {'Access-Control-Allow-Origin': '*'},
-            'body': json.dumps(user_response.__dict__, default=str)
+            'body': json.dumps(user_response, default=str)
         }
 
     except cognito.exceptions.UserNotFoundException as ex:
@@ -127,7 +127,8 @@ def register_user(event):
                 {"Name": "custom:price_id", "Value": "0"},
                 {"Name": "custom:transaction_id", "Value": "0"},
                 {"Name": "custom:transaction_status", "Value": "pending"},
-                {"Name": "custom:due_date", "Value": datetime.now(ZoneInfo("America/Santo_Domingo")).strftime("%Y-%m-%d")}
+                {"Name": "custom:due_date", "Value": datetime.now(
+                    ZoneInfo("America/Santo_Domingo")).strftime("%Y-%m-%d")}
 
             ],
             MessageAction="SUPPRESS"  # No enviar email
