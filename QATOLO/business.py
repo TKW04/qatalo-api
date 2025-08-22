@@ -67,28 +67,23 @@ def get_business(user_id: str):
             'body': json.dumps({'message': str(e)})
         }
 
-
-def create_member(event, user_name):
+def create_business(event, user_name, user_id):
     """
-    Create a new member.
+    Create a new user.
     """
     try:
         body = json.loads(event.get('body', '{}'))
+        business_id = str(uuid.uuid4())
         business_table.put_item(
             Item={
-                "business_id": str(uuid.uuid4()),
-                "first_name": body.get('first_name', ''),
-                "last_name": body.get('last_name', ''),
-                "email": body.get('email', ''),
-                "address": body.get('address', ''),
+                "business_id": business_id,
+                "name": body.get('name', ''),
+                "description": body.get('description', ''),
+                "slug": body.get('slug', ''),
                 "phone": body.get('phone', ''),
-                "birth_date": body.get('birth_date', ''),
-                "emergency_contact": body.get('emergency_contact', ''),
-                "emergency_contact_phone": body.get('emergency_contact_phone', ''),
-                "positions": body.get('positions', ''),
-                "is_active": body.get('is_active', True),
-                "creation_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "creation_user": user_name,
+                "logo_url": body.get('logo_url', ''),
+                "create_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "create_user": user_name,
                 "update_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "update_user": user_name
             }
@@ -99,13 +94,12 @@ def create_member(event, user_name):
             'body': json.dumps({'message': 'Miembro de la comunidad creado correctamente'})
         }
     except Exception as e:
-        print(json.dumps({"event": "create_member", "Error": str(e)}))
+        print(json.dumps({"event": "create_business", "Error": str(e)}))
         return {
             'statusCode': 500,
             'headers': {'Access-Control-Allow-Origin': '*'},
             'body': json.dumps({'message': str(e)})
         }
-
 
 def update_member(event, user_name, business_id):
     """
