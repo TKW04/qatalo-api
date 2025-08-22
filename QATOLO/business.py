@@ -45,11 +45,11 @@ def get_business(user_id: str):
         if "Items" in response and len(response["Items"]) > 0:
             business = {
                 "business_id": response["Items"][0]["business_id"],
-                "business_name": response["Items"][0]["business_name"],
-                "business_description": response["Items"][0]["business_description"],
-                "business_slug": response["Items"][0]["business_slug"],
-                "business_phone": response["Items"][0]["business_phone"],
-                "business_logo_url": response["Items"][0]["business_logo_url"]
+                "name": response["Items"][0]["business_name"],
+                "description": response["Items"][0]["business_description"],
+                "slug": response["Items"][0]["business_slug"],
+                "phone": response["Items"][0]["business_phone"],
+                "logo_url": response["Items"][0]["business_logo_url"]
             }
 
             return {
