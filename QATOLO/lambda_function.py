@@ -1,6 +1,7 @@
 import base64
 import json
 
+from business import business_routes
 from users import users_routes
 from paddle import paddle_routes
 
@@ -23,6 +24,8 @@ def lambda_handler(event, context):
             return paddle_routes(event, user_name=user_name, method=method, path=path)
         if "users" in path:
             return users_routes(path, method, event)
+        if "business" in path:
+            return business_routes(path, method, event)
 
     except Exception as e:
         print(f"Error processing request: {str(e)}")

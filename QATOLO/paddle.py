@@ -108,7 +108,6 @@ def verify_paddle_signature(event):
     data = payload.get('data', {})
     status = data.get('status')
 
-    print(f"Payload recibido: {status}")
     if status == "activated":
         activated_event(data, status)
     if status == "canceled":
@@ -121,14 +120,11 @@ def verify_paddle_signature(event):
 
 def trialing_event(payload, status):
     transaction_id = payload.get("id")
-    print(transaction_id)
     customer_id = payload.get("customer_id")
-    print(customer_id)
     user_id = payload.get("custom_data", {}).get("appUserId")
-    print(user_id)
-
-    # update_user(user_id=user_id, transaction_id=transaction_id,
-    #             transaction_status=status, customer_id=customer_id, due_date=None)
+    due_date = payload.get("current_billing_period").get("ends_at")
+    update_user(user_id=user_id, transaction_id=transaction_id,
+                transaction_status=status, customer_id=customer_id, due_date=due_date)
 
 
 def canceled_event(payload, status):

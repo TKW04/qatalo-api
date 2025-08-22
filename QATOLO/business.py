@@ -15,15 +15,15 @@ business_table = dynamodb.Table("qatalo.business")
 s3 = boto3.client('s3')
 
 
-def qatalo_routes(path, method, event, user_name):
+def business_routes(path, method, event, user_name):
 
-    match = re.fullmatch(r'/members/([^/]+)', path)
+    match = re.fullmatch(r'/business/([^/]+)', path)
     if match:
-        business_id = match.group(1)
+        id = match.group(1)
         if method == 'GET':
-            return get_business(business_id)
+            return get_business(user_id=id)
         elif method == 'PUT':
-            return update_member(event=event, user_name=user_name, business_id=business_id)
+            return update_member(event=event, user_name=user_name, business_id=id)
 
     return {
         'statusCode': 404,
@@ -31,20 +31,25 @@ def qatalo_routes(path, method, event, user_name):
     }
 
 
-def get_business(business_id: str):
+def get_business(user_id: str):
     """
     Retrieve a user by their ID.
     """
     try:
-        response = business_table.get_item(Key={"business_id": business_id})
-        if "Item" in response:
+        response = business_table.query(
+            KeyConditionExpression="name = :v_name",
+            ExpressionAttributeValues={
+                ":user_id": {"S": user_id}
+            }
+        )
+        if "Items" in response and len(response["Items"]) > 0:
             business = {
-                "business_id": response["Item"]["business_id"],
-                "business_name": response["Item"]["business_name"],
-                "business_description": response["Item"]["business_description"],
-                "business_slug": response["Item"]["business_slug"],
-                "business_phone": response["Item"]["business_phone"],
-                "business_logo_url": response["Item"]["business_logo_url"]
+                "business_id": response["Items"][0]["business_id"],
+                "business_name": response["Items"][0]["business_name"],
+                "business_description": response["Items"][0]["business_description"],
+                "business_slug": response["Items"][0]["business_slug"],
+                "business_phone": response["Items"][0]["business_phone"],
+                "business_logo_url": response["Items"][0]["business_logo_url"]
             }
 
             return {
