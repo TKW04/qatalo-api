@@ -4,6 +4,7 @@ import json
 from business import business_routes
 from users import users_routes
 from paddle import paddle_routes
+from categories import categories_routes
 
 
 def lambda_handler(event, context):
@@ -29,6 +30,8 @@ def lambda_handler(event, context):
             return users_routes(path=path, method=method, event=event)
         if "businesses" in path:
             return business_routes(path=path, method=method, event=event, user_name=user_name, user_id=user_id)
+        if "categories" in path:
+            return categories_routes(path=path, method=method, event=event, user_name=user_name, user_id=user_id)
 
     except Exception as e:
         print(f"Error processing request: {str(e)}")

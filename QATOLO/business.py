@@ -20,13 +20,14 @@ s3 = boto3.client('s3')
 def business_routes(path, method, event, user_name, user_id):
     if path == '/businesses' and method == 'POST':
         return create_business(event=event, user_name=user_name, user_id=user_id)
+    
+    if path == '/businesses' and method == 'GET':
+        return get_business(user_id=user_id)
 
     match = re.fullmatch(r'/businesses/([^/]+)', path)
     if match:
         id = match.group(1)
-        if method == 'GET':
-            return get_business(user_id=id)
-        elif method == 'PUT':
+        if method == 'PUT':
             return update_business(event=event, user_name=user_name, business_id=id, user_id=user_id)
 
     return {
