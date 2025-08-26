@@ -47,7 +47,6 @@ def get_products_by_user_id(user_id: str):
             FilterExpression=Attr('user_id').eq(user_id)
         )
         products = []
-
         for item in response.get("Items", []):
             products.append({
                 "product_id": item.get("product_id", ""),
@@ -168,7 +167,7 @@ def create_product(event, user_name, user_id):
                 "currency": product_create.get("currency", ""),
                 "imagesUrl": product_create.get("imagesUrl", []),
                 "category_id": product_create.get("category_id", ""),
-                "is_available": product_create.get("is_available", False),
+                "is_available": product_create.get("is_available", "unavailable"),
                 "user_id": user_id,
                 "create_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "create_user": user_name,
