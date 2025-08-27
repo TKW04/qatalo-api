@@ -6,8 +6,7 @@ import uuid
 from boto3.dynamodb.conditions import Attr
 from datetime import datetime
 
-AWS_REGION = "us-east-1"
-dynamodb = boto3.resource('dynamodb', region_name=AWS_REGION)
+dynamodb = boto3.resource('dynamodb', region_name=os.getenv('AWS_REGION'))
 categories_table = dynamodb.Table("qatalo.categories")
 
 
@@ -78,6 +77,7 @@ def get_category(category_id: str):
             category = {
                 "category_id": response["Item"].get("category_id", ""),
                 "category_slug": response["Item"].get("category_slug", ""),
+                "business_id": response["Item"].get("business_id", ""),
                 "category_name": response["Item"].get("category_name", ""),
                 "user_id": response["Item"].get("user_id", "")
             }
@@ -107,6 +107,7 @@ def create_category(event, user_name, user_id):
         categories_table.put_item(
             Item={
                 "category_id": str(uuid.uuid4()),
+                "business_id": body.get('business_id', ''),
                 "category_slug": body.get('slug', ''),
                 "category_name": body.get('name', ''),
                 "user_id": user_id,

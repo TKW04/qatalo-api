@@ -1,12 +1,13 @@
 import base64
 import io
-from json import decoder
 import os
 import re
 import traceback
 import boto3
 import json
 import uuid
+
+from json import decoder
 from boto3.dynamodb.conditions import Attr
 from datetime import datetime
 
@@ -50,6 +51,7 @@ def get_products_by_user_id(user_id: str):
         for item in response.get("Items", []):
             products.append({
                 "product_id": item.get("product_id", ""),
+                "business_id": item.get("business_id", ""),
                 "name": item.get("product_name", ""),
                 "description": item.get("product_description", ""),
                 "price": item.get("product_price", 0.0),
