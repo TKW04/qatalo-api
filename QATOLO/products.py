@@ -7,7 +7,7 @@ import boto3
 import json
 import uuid
 
-from json import decoder
+from requests_toolbelt.multipart import decoder
 from boto3.dynamodb.conditions import Attr
 from datetime import datetime
 
@@ -22,13 +22,13 @@ def products_routes(path, method, event, user_name, user_id):
         return get_products_by_user_id(user_id=user_id)
     if path == "/products" and method == 'POST':
         return create_product(event=event, user_name=user_name, user_id=user_id)
+    if path == "/products/delete/image" and method == 'DELETE':
+        return delete_product_image(event=event)
 
     match = re.fullmatch(r'/products/([^/]+)', path)
     if match:
         product_id = match.group(1)
-        if method == 'GET':
-            return get_product(product_id)
-        elif method == 'PUT':
+        if method == 'PUT':
             return update_product(event=event, user_name=user_name, product_id=product_id, user_id=user_id)
         elif method == 'DELETE':
             return delete_product(product_id)
@@ -55,6 +55,7 @@ def get_products_by_user_id(user_id: str):
                 "name": item.get("product_name", ""),
                 "description": item.get("product_description", ""),
                 "price": item.get("product_price", 0.0),
+                "quantity": item.get("product_quantity", 0),
                 "currency": item.get("product_currency", ""),
                 "imagesUrl": item.get("product_image_urls", []),
                 "category_id": item.get("product_category_id", ""),
@@ -72,40 +73,6 @@ def get_products_by_user_id(user_id: str):
         }
     except Exception as e:
         print(json.dumps({"event": "get_products", "Error": str(e)}))
-        return {
-            'statusCode': 500,
-            'headers': {'Access-Control-Allow-Origin': '*'},
-            'body': json.dumps({'message': str(e)})
-        }
-
-
-def get_product(product_id: str):
-    """
-    Retrieve a product by its ID.
-    """
-    try:
-        response = products_table.get_item(Key={"product_id": product_id})
-        if "Item" in response:
-            product = {
-                "product_id": response["Item"].get("product_id", ""),
-                "description": response["Item"].get("product_description", ""),
-                "price": response["Item"].get("product_price", 0.0),
-                "currency": response["Item"].get("product_currency", ""),
-                "imagesUrl": response["Item"].get("product_image_urls", []),
-                "category_id": response["Item"].get("product_category_id", ""),
-                "is_available": response["Item"].get("product_available", False),
-                "user_id": response["Item"].get("user_id", "")
-            }
-
-            return {
-                'statusCode': 200,
-                'headers': {'Access-Control-Allow-Origin': '*'},
-                'body': json.dumps(product, default=str)
-            }
-        else:
-            return None
-    except Exception as e:
-        print(json.dumps({"event": "get_member", "Error": str(e)}))
         return {
             'statusCode': 500,
             'headers': {'Access-Control-Allow-Origin': '*'},
@@ -163,9 +130,11 @@ def create_product(event, user_name, user_id):
         products_table.put_item(
             Item={
                 "product_id": product_id,
+                "business_id": product_create.get("business_id", ""),
                 "product_name": product_create.get("name", ""),
                 "description": product_create.get("description", ""),
                 "price": product_create.get("price", 0.0),
+                "quantity": product_create.get("quantity", 0),
                 "currency": product_create.get("currency", ""),
                 "imagesUrl": product_create.get("imagesUrl", []),
                 "category_id": product_create.get("category_id", ""),
@@ -229,11 +198,12 @@ def update_product(event, user_name, product_id, user_id):
 
         products_table.update_item(
             Key={"product_id": product_id},
-            UpdateExpression="SET product_name = :product_name, description = :description, price = :price, currency = :currency, imagesUrl = :imagesUrl, category_id = :category_id, user_id = :user_id, update_date = :update_date, update_user = :update_user",
+            UpdateExpression="SET product_name = :product_name, description = :description, price = :price, quantity = :quantity, currency = :currency, imagesUrl = :imagesUrl, category_id = :category_id, user_id = :user_id, update_date = :update_date, update_user = :update_user",
             ExpressionAttributeValues={
                 ':description': product_update.get('description', ''),
                 ':product_name': product_update.get('name', ''),
                 ':price': product_update.get('price', 0.0),
+                ':quantity': product_update.get('quantity', 0),
                 ':currency': product_update.get('currency', ''),
                 ':imagesUrl': product_update.get('imagesUrl', []),
                 ':category_id': product_update.get('category_id', ''),
@@ -258,11 +228,55 @@ def update_product(event, user_name, product_id, user_id):
         }
 
 
+def delete_product_image(event):
+    try:
+        body = json.loads(event.get('body', '{}'))
+        file_url = body.get('file_url', '')
+        product_id = body.get('product_id', '')
+
+        response = products_table.get_item(Key={"product_id": product_id})
+
+        if "Item" in response:
+            item = response["Item"]
+            if "imagesUrl" in item:
+                item["imagesUrl"].remove(file_url)
+                products_table.update_item(
+                    Key={"product_id": product_id},
+                    UpdateExpression="SET imagesUrl = :imagesUrl",
+                    ExpressionAttributeValues={
+                        ':imagesUrl': item["imagesUrl"]
+                    },
+                    ReturnValues="UPDATED_NEW"
+                )
+
+        delete_image(file_url)
+        return {
+            'statusCode': 200,
+            'headers': {'Access-Control-Allow-Origin': '*'},
+            'body': json.dumps({'message': 'Imagen eliminada correctamente'})
+        }
+    except Exception as e:
+        print(json.dumps({"event": "delete_product_image", "Error": str(e)}))
+        return {
+            'statusCode': 500,
+            'headers': {'Access-Control-Allow-Origin': '*'},
+            'body': json.dumps({'message': str(e)})
+        }
+
+
 def delete_product(product_id: str):
     """
     Delete a product by its ID.
     """
     try:
+        response = products_table.get_item(Key={"product_id": product_id})
+
+        if "Item" in response:
+            item = response["Item"]
+            if "imagesUrl" in item:
+                for image_url in item["imagesUrl"]:
+                    delete_image(image_url)
+
         products_table.delete_item(Key={"product_id": product_id})
         return {
             'statusCode': 200,
@@ -278,9 +292,24 @@ def delete_product(product_id: str):
         }
 
 
+def delete_image(file_url):
+    try:
+        file_name = file_url.split('/')[-1]
+        s3.delete_object(Bucket=os.getenv('BUCKET_NAME'), Key=file_name)
+        return True
+    except Exception as e:
+        print(json.dumps({
+            "event": "delete_image",
+            "error": str(e),
+            "trace": traceback.format_exc()
+        }))
+        return False
+
+
 def upload_image(file_info, user_id=None, type_file="image", product_id=None):
     try:
         file_name = f"business/products/{product_id}_{type_file}{file_info['extension']}"
+        print(file_name)
         file_url = f"https://{os.getenv('BUCKET_NAME')}.s3.{os.getenv('AWS_REGION')}.amazonaws.com/{file_name}"
         with io.BytesIO(file_info["content"]) as fileobj:
             s3.upload_fileobj(

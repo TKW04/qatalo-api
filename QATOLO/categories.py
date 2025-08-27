@@ -45,6 +45,7 @@ def get_categories_by_user_id(user_id: str):
         for item in response.get("Items", []):
             categories.append({
                 "category_id": item.get("category_id", ""),
+                "business_id": item.get("business_id", ""),
                 "slug": item.get("category_slug", ""),
                 "name": item.get("category_name", ""),
                 "user_id": item.get("user_id", "")
