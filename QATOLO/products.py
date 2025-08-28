@@ -53,14 +53,15 @@ def get_products_by_user_id(user_id: str):
                 "product_id": item.get("product_id", ""),
                 "business_id": item.get("business_id", ""),
                 "name": item.get("product_name", ""),
-                "description": item.get("product_description", ""),
-                "price": item.get("product_price", 0.0),
-                "quantity": item.get("product_quantity", 0),
-                "currency": item.get("product_currency", ""),
-                "imagesUrl": item.get("product_image_urls", []),
-                "category_id": item.get("product_category_id", ""),
-                "is_available": item.get("product_available", False),
-                "order": item.get("product_order", 0)
+                "description": item.get("description", ""),
+                "price": item.get("price", 0.0),
+                "quantity": item.get("quantity", 0),
+                "orden": item.get("orden", 0),
+                "currency": item.get("currency", ""),
+                "imagesUrl": item.get("image_urls", []),
+                "category_id": item.get("category_id", ""),
+                "is_available": item.get("available", False),
+                "order": item.get("order", 0)
             })
         return {
             'statusCode': 200,  # No uses 204
@@ -126,7 +127,8 @@ def create_product(event, user_name, user_id):
                 count += 1
                 images.append(upload_image(
                     file_info=file_info, user_id=user_id, type_file=f"image{count}", product_id=product_id))
-            product_create['imagesUrl'] = images[0] if images else []
+            product_create['imagesUrl'] = images if images else []
+
         products_table.put_item(
             Item={
                 "product_id": product_id,
@@ -135,6 +137,7 @@ def create_product(event, user_name, user_id):
                 "description": product_create.get("description", ""),
                 "price": product_create.get("price", 0.0),
                 "quantity": product_create.get("quantity", 0),
+                "orden": product_create.get("orden", 0),
                 "currency": product_create.get("currency", ""),
                 "imagesUrl": product_create.get("imagesUrl", []),
                 "category_id": product_create.get("category_id", ""),
@@ -198,12 +201,13 @@ def update_product(event, user_name, product_id, user_id):
 
         products_table.update_item(
             Key={"product_id": product_id},
-            UpdateExpression="SET product_name = :product_name, description = :description, price = :price, quantity = :quantity, currency = :currency, imagesUrl = :imagesUrl, category_id = :category_id, user_id = :user_id, update_date = :update_date, update_user = :update_user",
+            UpdateExpression="SET product_name = :product_name, description = :description, price = :price, quantity = :quantity, orden = :orden, currency = :currency, imagesUrl = :imagesUrl, category_id = :category_id, user_id = :user_id, update_date = :update_date, update_user = :update_user",
             ExpressionAttributeValues={
                 ':description': product_update.get('description', ''),
                 ':product_name': product_update.get('name', ''),
                 ':price': product_update.get('price', 0.0),
                 ':quantity': product_update.get('quantity', 0),
+                ':orden': product_update.get('orden', 0),
                 ':currency': product_update.get('currency', ''),
                 ':imagesUrl': product_update.get('imagesUrl', []),
                 ':category_id': product_update.get('category_id', ''),
