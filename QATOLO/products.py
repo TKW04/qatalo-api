@@ -1,4 +1,5 @@
 import base64
+from decimal import Decimal
 import io
 import os
 import re
@@ -49,6 +50,14 @@ def get_products_by_user_id(user_id: str):
         )
         products = []
         for item in response.get("Items", []):
+
+            images = []
+            imagesUrl = item.get("imagesUrl", [])
+            for image in imagesUrl:
+                images.append({
+                    "image": image
+                })
+
             products.append({
                 "product_id": item.get("product_id", ""),
                 "business_id": item.get("business_id", ""),
@@ -58,10 +67,9 @@ def get_products_by_user_id(user_id: str):
                 "quantity": item.get("quantity", 0),
                 "orden": item.get("orden", 0),
                 "currency": item.get("currency", ""),
-                "imagesUrl": item.get("image_urls", []),
+                "imagesUrl": images,
                 "category_id": item.get("category_id", ""),
-                "is_available": item.get("available", False),
-                "order": item.get("order", 0)
+                "is_available": item.get("is_available", False)
             })
         return {
             'statusCode': 200,  # No uses 204
@@ -121,12 +129,10 @@ def create_product(event, user_name, user_id):
         product_id = str(uuid.uuid4())
 
         if file_infos:
-            count = 0
             images = []
             for file_info in file_infos:
-                count += 1
                 images.append(upload_image(
-                    file_info=file_info, user_id=user_id, type_file=f"image{count}", product_id=product_id))
+                    file_info=file_info, user_id=user_id, type_file=str(uuid.uuid4()), product_id=product_id))
             product_create['imagesUrl'] = images if images else []
 
         products_table.put_item(
@@ -135,7 +141,7 @@ def create_product(event, user_name, user_id):
                 "business_id": product_create.get("business_id", ""),
                 "product_name": product_create.get("name", ""),
                 "description": product_create.get("description", ""),
-                "price": product_create.get("price", 0.0),
+                "price": Decimal(product_create.get("price", 0.00)),
                 "quantity": product_create.get("quantity", 0),
                 "orden": product_create.get("orden", 0),
                 "currency": product_create.get("currency", ""),
@@ -199,9 +205,22 @@ def update_product(event, user_name, product_id, user_id):
             else:
                 product_update[name] = part.text
 
+        response = products_table.get_item(Key={"product_id": product_id})
+        imagesUrl=[]
+        if "Item" in response:
+            imagesUrl = response["Item"].get("imagesUrl", [])
+        images = []
+        for image in imagesUrl:
+            images.append(image)
+            
+        if file_infos:
+            for file_info in file_infos:
+                images.append(upload_image(
+                    file_info=file_info, user_id=user_id, type_file=str(uuid.uuid4()), product_id=product_id))
+
         products_table.update_item(
             Key={"product_id": product_id},
-            UpdateExpression="SET product_name = :product_name, description = :description, price = :price, quantity = :quantity, orden = :orden, currency = :currency, imagesUrl = :imagesUrl, category_id = :category_id, user_id = :user_id, update_date = :update_date, update_user = :update_user",
+            UpdateExpression="SET product_name = :product_name, description = :description, price = :price, quantity = :quantity, orden = :orden, currency = :currency, imagesUrl = :imagesUrl, category_id = :category_id, is_available = :is_available, user_id = :user_id, update_date = :update_date, update_user = :update_user",
             ExpressionAttributeValues={
                 ':description': product_update.get('description', ''),
                 ':product_name': product_update.get('name', ''),
@@ -209,8 +228,9 @@ def update_product(event, user_name, product_id, user_id):
                 ':quantity': product_update.get('quantity', 0),
                 ':orden': product_update.get('orden', 0),
                 ':currency': product_update.get('currency', ''),
-                ':imagesUrl': product_update.get('imagesUrl', []),
+                ':imagesUrl': images,
                 ':category_id': product_update.get('category_id', ''),
+                ':is_available': product_update.get('is_available', 'unavailable'),
                 ':user_id': user_id,
                 ':update_date': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 ':update_user': user_name
@@ -298,7 +318,8 @@ def delete_product(product_id: str):
 
 def delete_image(file_url):
     try:
-        file_name = file_url.split('/')[-1]
+        file_name = file_url.split('https://qatalo.s3.us-east-1.amazonaws.com/')[1]
+        print(file_name)
         s3.delete_object(Bucket=os.getenv('BUCKET_NAME'), Key=file_name)
         return True
     except Exception as e:

@@ -20,11 +20,9 @@ def categories_routes(path, method, event, user_name, user_id):
     match = re.fullmatch(r'/categories/([^/]+)', path)
     if match:
         category_id = match.group(1)
-        if method == 'GET':
-            return get_category(category_id)
-        elif method == 'PUT':
+        if method == 'PUT':
             return update_category(event=event, user_name=user_name, category_id=category_id, user_id=user_id)
-        elif method == 'DELETE':
+        if method == 'DELETE':
             return delete_category(category_id)
 
     return {
@@ -61,37 +59,6 @@ def get_categories_by_user_id(user_id: str):
         }
     except Exception as e:
         print(json.dumps({"event": "get_categories", "Error": str(e)}))
-        return {
-            'statusCode': 500,
-            'headers': {'Access-Control-Allow-Origin': '*'},
-            'body': json.dumps({'message': str(e)})
-        }
-
-
-def get_category(category_id: str):
-    """
-    Retrieve a category by its ID.
-    """
-    try:
-        response = categories_table.get_item(Key={"category_id": category_id})
-        if "Item" in response:
-            category = {
-                "category_id": response["Item"].get("category_id", ""),
-                "category_slug": response["Item"].get("category_slug", ""),
-                "business_id": response["Item"].get("business_id", ""),
-                "category_name": response["Item"].get("category_name", ""),
-                "user_id": response["Item"].get("user_id", "")
-            }
-
-            return {
-                'statusCode': 200,
-                'headers': {'Access-Control-Allow-Origin': '*'},
-                'body': json.dumps(category, default=str)
-            }
-        else:
-            return None
-    except Exception as e:
-        print(json.dumps({"event": "get_member", "Error": str(e)}))
         return {
             'statusCode': 500,
             'headers': {'Access-Control-Allow-Origin': '*'},
