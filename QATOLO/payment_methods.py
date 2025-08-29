@@ -54,7 +54,9 @@ def get_payment_methods_by_user_id(user_id: str):
                 "owner_document": item.get("owner_document", ""),
                 "owner_email": item.get("owner_email", ""),
                 "swift": item.get("swift", ""),
-                "standard_account": item.get("standard_account", "")
+                "standard_account": item.get("standard_account", ""),
+                "payment_link": item.get("payment_link", ""),
+                "currency": item.get("currency", "")
 
             })
         return {
@@ -95,6 +97,8 @@ def create_payment_method(event, user_name, user_id):
                 "owner_email": body.get('owner_email', ''),
                 "swift": body.get('swift', ''),
                 "standard_account": body.get('standard_account', ''),
+                "payment_link": body.get('payment_link', ''),
+                "currency": body.get('currency', ''),
                 "create_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "create_user": user_name,
                 "update_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -123,7 +127,7 @@ def update_payment_method(event, user_name, payment_method_id, user_id):
         body = json.loads(event.get('body', '{}'))
         payment_methods_table.update_item(
             Key={"payment_method_id": payment_method_id},
-            UpdateExpression="SET payment_type = :payment_type, account_number = :account_number, account_type = :account_type, bank_name = :bank_name, routing_number = :routing_number, owner_name = :owner_name, owner_document = :owner_document, owner_email = :owner_email, swift = :swift, standard_account = :standard_account, update_date = :update_date, update_user = :update_user",
+            UpdateExpression="SET payment_type = :payment_type, account_number = :account_number, account_type = :account_type, bank_name = :bank_name, routing_number = :routing_number, owner_name = :owner_name, owner_document = :owner_document, owner_email = :owner_email, swift = :swift, standard_account = :standard_account, payment_link = :payment_link, currency = :currency, update_date = :update_date, update_user = :update_user",
             ExpressionAttributeValues={
                 ':payment_type': body.get('payment_type', ''),
                 ':account_number': body.get('account_number', ''),
@@ -134,6 +138,8 @@ def update_payment_method(event, user_name, payment_method_id, user_id):
                 ':owner_document': body.get('owner_document', ''),
                 ':owner_email': body.get('owner_email', ''),
                 ':swift': body.get('swift', ''),
+                ':payment_link': body.get('payment_link', ''),
+                ':currency': body.get('currency', ''),
                 ':standard_account': body.get('standard_account', ''),
                 ':update_date': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 ':update_user': user_name
