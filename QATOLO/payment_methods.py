@@ -24,6 +24,8 @@ def payment_methods_routes(path, method, event, user_name, user_id):
             return update_payment_method(event=event, user_name=user_name, payment_method_id=payment_method_id, user_id=user_id)
         if method == 'DELETE':
             return delete_payment_method(payment_method_id)
+        if method == 'GET':
+            return get_payment_methods_by_business_id(business_id=payment_method_id)
 
     return {
         'statusCode': 404,
@@ -75,7 +77,53 @@ def get_payment_methods_by_user_id(user_id: str):
             'headers': {'Access-Control-Allow-Origin': '*'},
             'body': json.dumps({'message': str(e)})
         }
-        
+
+def get_payment_methods_by_business_id(business_id: str):
+    """
+    Retrieve all payment_methods from the database.
+    """
+    try:
+        response = payment_methods_table.scan(
+            FilterExpression=Attr('business_id').eq(business_id)
+        )
+        payment_methods = []
+        for item in response.get("Items", []):
+            payment_methods.append({
+                "payment_method_id": item.get("payment_method_id", ""),
+                "user_id": item.get("user_id", ""),
+                "business_id": item.get("business_id", ""),
+                "payment_type": item.get("payment_type", ""),
+                "account_number": item.get("account_number", ""),
+                "account_type": item.get("account_type", ""),
+                "bank_name": item.get("bank_name", ""),
+                "routing_number": item.get("routing_number", ""),
+                "owner_name": item.get("owner_name", ""),
+                "owner_document": item.get("owner_document", ""),
+                "owner_email": item.get("owner_email", ""),
+                "swift": item.get("swift", ""),
+                "standard_account": item.get("standard_account", ""),
+                "payment_link": item.get("payment_link", ""),
+                "currency": item.get("currency", "")
+
+            })
+        return {
+            'statusCode': 200,  # No uses 204
+            'headers': {
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Headers': '*',
+                'Access-Control-Allow-Methods': '*'
+            },
+            'body': json.dumps(payment_methods, default=str)
+        }
+    except Exception as e:
+        print(json.dumps({"event": "get_payment_methods", "Error": str(e)}))
+        return {
+            'statusCode': 500,
+            'headers': {'Access-Control-Allow-Origin': '*'},
+            'body': json.dumps({'message': str(e)})
+        }
+   
+
 def create_payment_method(event, user_name, user_id):
     """
     Create a new payment_method.
@@ -127,8 +175,9 @@ def update_payment_method(event, user_name, payment_method_id, user_id):
         body = json.loads(event.get('body', '{}'))
         payment_methods_table.update_item(
             Key={"payment_method_id": payment_method_id},
-            UpdateExpression="SET payment_type = :payment_type, account_number = :account_number, account_type = :account_type, bank_name = :bank_name, routing_number = :routing_number, owner_name = :owner_name, owner_document = :owner_document, owner_email = :owner_email, swift = :swift, standard_account = :standard_account, payment_link = :payment_link, currency = :currency, update_date = :update_date, update_user = :update_user",
+            UpdateExpression="SET business_id = :business_id, payment_type = :payment_type, account_number = :account_number, account_type = :account_type, bank_name = :bank_name, routing_number = :routing_number, owner_name = :owner_name, owner_document = :owner_document, owner_email = :owner_email, swift = :swift, standard_account = :standard_account, payment_link = :payment_link, currency = :currency, update_date = :update_date, update_user = :update_user",
             ExpressionAttributeValues={
+                ':business_id': body.get('business_id', ''),
                 ':payment_type': body.get('payment_type', ''),
                 ':account_number': body.get('account_number', ''),
                 ':account_type': body.get('account_type', ''),

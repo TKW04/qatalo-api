@@ -22,6 +22,8 @@ def categories_routes(path, method, event, user_name, user_id):
         category_id = match.group(1)
         if method == 'PUT':
             return update_category(event=event, user_name=user_name, category_id=category_id, user_id=user_id)
+        if method == 'GET':
+            return get_categories_by_business_id(business_id=category_id)
         if method == 'DELETE':
             return delete_category(category_id)
 
@@ -39,12 +41,46 @@ def get_categories_by_user_id(user_id: str):
         response = categories_table.scan(
             FilterExpression=Attr('user_id').eq(user_id)
         )
-        categories =[]
+        categories = []
         for item in response.get("Items", []):
             categories.append({
                 "category_id": item.get("category_id", ""),
                 "business_id": item.get("business_id", ""),
                 "slug": item.get("category_slug", ""),
+                "name": item.get("category_name", ""),
+                "user_id": item.get("user_id", "")
+            })
+        return {
+            'statusCode': 200,  # No uses 204
+            'headers': {
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Headers': '*',
+                'Access-Control-Allow-Methods': '*'
+            },
+            'body': json.dumps(categories, default=str)
+        }
+    except Exception as e:
+        print(json.dumps({"event": "get_categories", "Error": str(e)}))
+        return {
+            'statusCode': 500,
+            'headers': {'Access-Control-Allow-Origin': '*'},
+            'body': json.dumps({'message': str(e)})
+        }
+
+
+def get_categories_by_business_id(business_id: str):
+    """
+    Retrieve all categories from the database.
+    """
+    try:
+        response = categories_table.scan(
+            FilterExpression=Attr('business_id').eq(business_id)
+        )
+        categories = []
+        for item in response.get("Items", []):
+            categories.append({
+                "category_id": item.get("category_id", ""),
+                "business_id": item.get("business_id", ""),
                 "name": item.get("category_name", ""),
                 "user_id": item.get("user_id", "")
             })

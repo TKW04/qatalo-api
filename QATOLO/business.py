@@ -29,6 +29,8 @@ def business_routes(path, method, event, user_name, user_id):
         id = match.group(1)
         if method == 'PUT':
             return update_business(event=event, user_name=user_name, business_id=id, user_id=user_id)
+        if method == 'GET':
+            return get_business_by_slug(slug=id)
 
     return {
         'statusCode': 404,
@@ -43,6 +45,39 @@ def get_business(user_id: str):
     try:
         response = business_table.scan(
             FilterExpression=Attr('user_id').eq(user_id)
+        )
+        if "Items" in response and len(response["Items"]) > 0:
+            business = {
+                "business_id": response["Items"][0]["business_id"],
+                "name": response["Items"][0]["business_name"],
+                "description": response["Items"][0]["business_description"],
+                "slug": response["Items"][0]["business_slug"],
+                "phone": response["Items"][0]["business_phone"],
+                "logo_url": response["Items"][0]["business_logo_url"]
+            }
+
+            return {
+                'statusCode': 200,
+                'headers': {'Access-Control-Allow-Origin': '*'},
+                'body': json.dumps(business, default=str)
+            }
+        else:
+            return None
+    except Exception as e:
+        print(json.dumps({"event": "get_business", "Error": str(e)}))
+        return {
+            'statusCode': 500,
+            'headers': {'Access-Control-Allow-Origin': '*'},
+            'body': json.dumps({'message': str(e)})
+        }
+
+def get_business_by_slug(slug: str):
+    """
+    Retrieve a business by its slug.
+    """
+    try:
+        response = business_table.scan(
+            FilterExpression=Attr('business_slug').eq(slug)
         )
         if "Items" in response and len(response["Items"]) > 0:
             business = {

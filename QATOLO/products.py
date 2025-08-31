@@ -31,7 +31,9 @@ def products_routes(path, method, event, user_name, user_id):
         product_id = match.group(1)
         if method == 'PUT':
             return update_product(event=event, user_name=user_name, product_id=product_id, user_id=user_id)
-        elif method == 'DELETE':
+        if method == 'GET':
+            return get_products_by_business_id(business_id=product_id)
+        if method == 'DELETE':
             return delete_product(product_id)
 
     return {
@@ -64,6 +66,55 @@ def get_products_by_user_id(user_id: str):
                 "name": item.get("product_name", ""),
                 "description": item.get("description", ""),
                 "price": item.get("price", 0.0),
+                "quantity": item.get("quantity", 0),
+                "orden": item.get("orden", 0),
+                "currency": item.get("currency", ""),
+                "imagesUrl": images,
+                "category_id": item.get("category_id", ""),
+                "is_available": item.get("is_available", False)
+            })
+        return {
+            'statusCode': 200,  # No uses 204
+            'headers': {
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Headers': '*',
+                'Access-Control-Allow-Methods': '*'
+            },
+            'body': json.dumps(products, default=str)
+        }
+    except Exception as e:
+        print(json.dumps({"event": "get_products", "Error": str(e)}))
+        return {
+            'statusCode': 500,
+            'headers': {'Access-Control-Allow-Origin': '*'},
+            'body': json.dumps({'message': str(e)})
+        }
+
+
+def get_products_by_business_id(business_id: str):
+    """
+    Retrieve all products from the database.
+    """
+    try:
+        response = products_table.scan(
+            FilterExpression=Attr('business_id').eq(business_id)
+        )
+        products = []
+        for item in response.get("Items", []):
+
+            images = []
+            imagesUrl = item.get("imagesUrl", [])
+            for image in imagesUrl:
+                images.append({
+                    "image": image
+                })
+
+            products.append({
+                "product_id": item.get("product_id", ""),
+                "business_id": item.get("business_id", ""),
+                "name": item.get("product_name", ""),
+                "description": item.get("description", ""),
+                "price": item.get("price", 0.00),
                 "quantity": item.get("quantity", 0),
                 "orden": item.get("orden", 0),
                 "currency": item.get("currency", ""),

@@ -1,6 +1,7 @@
 import base64
 import json
 
+from customers import customers_routes
 from payment_methods import payment_methods_routes
 from products import products_routes
 from business import business_routes
@@ -38,6 +39,8 @@ def lambda_handler(event, context):
             return products_routes(path=path, method=method, event=event, user_name=user_name, user_id=user_id)
         if "payment_methods" in path:
             return payment_methods_routes(path=path, method=method, event=event, user_name=user_name, user_id=user_id)
+        if "customers" in path:
+            return customers_routes(path=path, method=method, event=event, user_name=user_name, user_id=user_id)
 
     except Exception as e:
         print(f"Error processing request: {str(e)}")
