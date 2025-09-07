@@ -9,6 +9,7 @@ from datetime import datetime
 
 dynamodb = boto3.resource('dynamodb', region_name=os.getenv('AWS_REGION'))
 customers_table = dynamodb.Table("qatalo.customers")
+business_table = dynamodb.Table("qatalo.business")
 
 
 def customers_routes(path, method, event, user_name, user_id):
@@ -18,16 +19,25 @@ def customers_routes(path, method, event, user_name, user_id):
     if path == "/customers" and method == 'POST':
         return create_customer(event=event)
 
+    # print("path:", path)
+    # match_transaction = re.fullmatch(
+    #     r'/customers/transactions/([^/]+)', path)
+    # if match_transaction and method == 'GET':
+    #     customer_id = match_transaction.group(1)
+    #     print("customer_id:", customer_id)
+    #     return get_customer_transaction(customer_id=customer_id)
+
     match = re.fullmatch(r'/customers/([^/]+)', path)
     if match:
         customer_id = match.group(1)
         if method == 'PUT':
             return update_customer(event=event, user_name=user_name, customer_id=customer_id, user_id=user_id)
-        # if method == 'GET':
-        #     return get_customers_by_business_id(business_id=customer_id)
         if method == 'DELETE':
             return delete_customer(customer_id)
+        if method == 'GET':
+            return get_customer_transaction(customer_id=customer_id)
 
+    print("No route matched")
     return {
         'statusCode': 404,
         'body': 'Ruta no encontrado'
@@ -39,21 +49,26 @@ def get_customers_by_user_id(user_id: str):
     Retrieve all customers from the database.
     """
     try:
-        response = customers_table.scan(
+        business_response = business_table.scan(
             FilterExpression=Attr('user_id').eq(user_id)
         )
         customers = []
-        for item in response.get("Items", []):
-            customers.append({
-                "customer_id": item.get("customer_id", ""),
-                "business_id": item.get("business_id", ""),
-                "given_name": item.get("given_name", ""),
-                "family_name": item.get("family_name", ""),
-                "transactions": item.get("transactions", []),
-                "email": item.get("email", ""),
-                "phone": item.get("phone", ""),
-                "user_id": item.get("user_id", "")
-            })
+        if "Items" in business_response and len(business_response["Items"]) > 0:
+            business_id = business_response["Items"][0].get("business_id", "")
+            response = customers_table.scan(
+                FilterExpression=Attr('business_id').eq(business_id)
+            )
+
+            for item in response.get("Items", []):
+                customers.append({
+                    "customer_id": item.get("customer_id", ""),
+                    "business_id": item.get("business_id", ""),
+                    "given_name": item.get("given_name", ""),
+                    "family_name": item.get("family_name", ""),
+                    "transactions": item.get("transactions", []),
+                    "email": item.get("email", ""),
+                    "phone": item.get("phone", "")
+                })
         return {
             'statusCode': 200,  # No uses 204
             'headers': {
@@ -65,6 +80,52 @@ def get_customers_by_user_id(user_id: str):
         }
     except Exception as e:
         print(json.dumps({"event": "get_customers", "Error": str(e)}))
+        return {
+            'statusCode': 500,
+            'headers': {'Access-Control-Allow-Origin': '*'},
+            'body': json.dumps({'message': str(e)})
+        }
+
+
+def get_customer_transaction(customer_id: str):
+    """
+    Retrieve a customer transaction by its ID.
+    """
+    try:
+        response = customers_table.get_item(Key={"customer_id": customer_id})
+        if "Item" in response:
+            item = response["Item"]\
+
+            customer = {
+                "customer_id": item.get("customer_id", ""),
+                "business_id": item.get("business_id", ""),
+                "given_name": item.get("given_name", ""),
+                "family_name": item.get("family_name", ""),
+                "email": item.get("email", ""),
+                "phone": item.get("phone", ""),
+                "transactions": item.get("transactions", [])
+            }
+            if customer and "transactions" in customer:
+                return {
+                    'statusCode': 200,
+                    'headers': {'Access-Control-Allow-Origin': '*'},
+                    'body': json.dumps(customer, default=str)
+                }
+            else:
+                return {
+                    'statusCode': 404,
+                    'headers': {'Access-Control-Allow-Origin': '*'},
+                    'body': json.dumps({'message': 'Transacción no encontrada'})
+                }
+        else:
+            return {
+                'statusCode': 404,
+                'headers': {'Access-Control-Allow-Origin': '*'},
+                'body': json.dumps({'message': 'Cliente no encontrado'})
+            }
+    except Exception as e:
+        print(json.dumps(
+            {"event": "get_customer_transaction", "Error": str(e)}))
         return {
             'statusCode': 500,
             'headers': {'Access-Control-Allow-Origin': '*'},
