@@ -25,14 +25,6 @@ def customers_routes(path, method, event, user_name, user_id):
     if path == "/customers" and method == 'POST':
         return create_customer(event=event)
 
-    # print("path:", path)
-    # match_transaction = re.fullmatch(
-    #     r'/customers/transactions/([^/]+)', path)
-    # if match_transaction and method == 'GET':
-    #     customer_id = match_transaction.group(1)
-    #     print("customer_id:", customer_id)
-    #     return get_customer_transaction(customer_id=customer_id)
-
     match = re.fullmatch(r'/customers/([^/]+)', path)
     if match:
         customer_id = match.group(1)
@@ -439,6 +431,7 @@ def cancel_transaction(event):
             'body': json.dumps({'message': str(e)})
         }
 
+
 def approve_transaction(event):
     try:
         body = json.loads(event.get('body', '{}'))
@@ -496,6 +489,7 @@ def approve_transaction(event):
             'headers': {'Access-Control-Allow-Origin': '*'},
             'body': json.dumps({'message': str(e)})
         }
+
 
 def upload_image(file_info, customer_id=None, transaction_id=None):
     try:

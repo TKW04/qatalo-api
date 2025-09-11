@@ -26,20 +26,13 @@ def paddle_routes(event, user_name, method, path):
     if path == "/paddle/products" and method.upper() == "GET":
         return get_products()
 
-    match_subscription_id = re.fullmatch(
-        r'/paddle/subscription/cancel/([^/]+)', path)
-    if match_subscription_id:
-        subscription_id = match_subscription_id.group(1)
-        if method.upper() == "POST":
-            return cancel_subscription(subscription_id=subscription_id)
-
-    match_customer = re.fullmatch(
-        r'/paddle/subscription/paymentlink/([^/]+)/([^/]+)', path)
-    if match_customer:
-        customer_id = match_customer.group(1)
-        subscription_id = match_customer.group(2)
+    match = re.fullmatch(
+        r'/paddle/subscription/([^/]+)', path)
+    if match:
+        subscription_id = match.group(1)
+        print(f"subscription_id: {subscription_id}")
         if method.upper() == "GET":
-            return generate_update_payment_link(customer_id=customer_id, subscription_id=subscription_id)
+            return get_subscription(subscription_id=subscription_id)
 
     # webhook
     if path == "/paddle/webhook" and method.upper() == "POST":
@@ -189,62 +182,41 @@ def update_user(user_id, transaction_id, transaction_status, customer_id, due_da
         }
 
 
-def cancel_subscription(subscription_id: str) -> dict:
+def get_subscription(subscription_id: str) -> dict:
     """
-    Cancela una suscripción activa en Paddle Billing.
+    Obtiene los detalles de una suscripción en Paddle Billing.
     """
     try:
-        url = f"{PADDLE_API_BASE}/subscriptions/{subscription_id}/cancel"
+        url = f"{PADDLE_API_BASE}/subscriptions/{subscription_id}"
         headers = {
             "Authorization": f"Bearer {PADDLE_API_KEY}",
             "Content-Type": "application/json"
         }
 
-        response = requests.post(url, headers=headers)
+        response = requests.get(url, headers=headers)
         if response.status_code == 200:
-            return {
-                "status": "success",
-                "data": response.json()
-            }
-        else:
-            return {
-                "status": "error",
-                "code": response.status_code,
-                "message": response.text
-            }
-    except Exception as e:
-        print(json.dumps({"event": "update_user", "Error": str(e)}))
-        return {
-            "status": "error",
-            "message": str(e)
-        }
+            data = response.json().get("data", {})
+            management_urls = data.get("management_urls", {})
+            item = data.get("items", [])[0] if data.get("items", []) else {}
+            price = item.get("price", {})
+            trials_dates = item.get("trial_dates", {})
+            unit_price_overrides = price.get("unit_price_overrides", [])[
+                0] if price.get("unit_price_overrides", []) else []
+            unit_price = unit_price_overrides.get(
+                "unit_price", {}) if unit_price_overrides.get("unit_price", {}) else {}
 
-
-def generate_update_payment_link(customer_id: str, subscription_id: str) -> dict:
-    """
-    Genera un link seguro para que el cliente actualice su método de pago.
-    """
-    try:
-        url = f"{PADDLE_API_BASE}/customers/{customer_id}/portal-sessions"
-        print(f"url: {url}")
-        headers = {
-            "Authorization": f"Bearer {PADDLE_API_KEY}",
-            "Content-Type": "application/json"
-        }
-        payload = {
-            "subscription_ids": [
-                subscription_id
-            ]
-        }  # Se puede enviar metadata extra si quieres
-
-        response = requests.post(url, headers=headers, json=payload)
-        if response.status_code == 201:
-            response_body = response.json()
-            data = response_body.get("data", {})
-            urls = data.get("urls", {})
-            general_url = urls.get("general", "")
             result = {
-                "customer_portal_url": general_url.get("overview", ""),
+                "subscription_id": data.get("id", ""),
+                "customer_id": data.get("customer_id", ""),
+                "status": data.get("status", ""),
+                "next_bill_date": data.get("next_billed_at", ""),
+                "update_url": management_urls.get("update_payment_method", ""),
+                "trial_starts_at": trials_dates.get("starts_at", ""),
+                "trial_ends_at": trials_dates.get("ends_at", ""),
+                "trial_period": price.get("trial_period", {}),
+                "billing_cycle": price.get("billing_cycle", {}),
+                "price":  int(unit_price.get("amount", 0))/100 if unit_price else 0,
+                "currency": unit_price.get("currency_code", "") if unit_price else "",
             }
             return {
                 'statusCode': 200,
@@ -253,13 +225,14 @@ def generate_update_payment_link(customer_id: str, subscription_id: str) -> dict
             }
         else:
             return {
-                "status": "error",
-                "code": response.status_code,
-                "message": response.text
+                'statusCode': response.status_code,
+                'headers': {'Access-Control-Allow-Origin': '*'},
+                'body': response.text
             }
     except Exception as e:
-        print(json.dumps({"event": "update_user", "Error": str(e)}))
+        print(json.dumps({"event": "get_subscription", "Error": str(e)}))
         return {
-            "status": "error",
-            "message": str(e)
+            'statusCode': 500,
+            'headers': {'Access-Control-Allow-Origin': '*'},
+            'body': json.dumps({'message': str(e)})
         }
