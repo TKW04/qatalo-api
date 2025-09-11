@@ -385,7 +385,6 @@ def delete_image(file_url):
 def upload_image(file_info, user_id=None, type_file="image", product_id=None):
     try:
         file_name = f"business/products/{product_id}_{type_file}{file_info['extension']}"
-        print(file_name)
         file_url = f"https://{os.getenv('BUCKET_NAME')}.s3.{os.getenv('AWS_REGION')}.amazonaws.com/{file_name}"
         with io.BytesIO(file_info["content"]) as fileobj:
             s3.upload_fileobj(
