@@ -1,6 +1,7 @@
 import os
 import json
 import base64
+import re
 import requests
 import boto3
 from types import SimpleNamespace
@@ -9,7 +10,6 @@ from paddle_billing.Notifications import Secret, Verifier
 PADDLE_API_KEY = os.environ['PADDLE_API_KEY']            # sandbox API key
 PADDLE_API_BASE = os.environ.get(
     'PADDLE_API_BASE', 'https://sandbox-api.paddle.com')
-# endpoint secret key from Paddle
 PADDLE_WEBHOOK_SECRET = os.environ['PADDLE_WEBHOOK_SECRET']
 cognito = boto3.client('cognito-idp')
 USER_POOL_ID = os.environ.get('USER_POOL_ID')
@@ -23,11 +23,26 @@ HEADERS = {
 def paddle_routes(event, user_name, method, path):
 
     # obtener productos
-    if path.endswith("/paddle/products") and method.upper() == "GET":
+    if path == "/paddle/products" and method.upper() == "GET":
         return get_products()
 
+    match_subscription_id = re.fullmatch(
+        r'/paddle/subscription/cancel/([^/]+)', path)
+    if match_subscription_id:
+        subscription_id = match_subscription_id.group(1)
+        if method.upper() == "POST":
+            return cancel_subscription(subscription_id=subscription_id)
+
+    match_customer = re.fullmatch(
+        r'/paddle/subscription/paymentlink/([^/]+)/([^/]+)', path)
+    if match_customer:
+        customer_id = match_customer.group(1)
+        subscription_id = match_customer.group(2)
+        if method.upper() == "GET":
+            return generate_update_payment_link(customer_id=customer_id, subscription_id=subscription_id)
+
     # webhook
-    if path.endswith("/paddle/webhook") and method.upper() == "POST":
+    if path == "/paddle/webhook" and method.upper() == "POST":
         verify_paddle_signature(event)
 
     return {"statusCode": 404, "body": "Not found"}
@@ -171,4 +186,80 @@ def update_user(user_id, transaction_id, transaction_status, customer_id, due_da
             'statusCode': 500,
             'headers': {'Access-Control-Allow-Origin': '*'},
             'body': json.dumps({'message': str(e)})
+        }
+
+
+def cancel_subscription(subscription_id: str) -> dict:
+    """
+    Cancela una suscripción activa en Paddle Billing.
+    """
+    try:
+        url = f"{PADDLE_API_BASE}/subscriptions/{subscription_id}/cancel"
+        headers = {
+            "Authorization": f"Bearer {PADDLE_API_KEY}",
+            "Content-Type": "application/json"
+        }
+
+        response = requests.post(url, headers=headers)
+        if response.status_code == 200:
+            return {
+                "status": "success",
+                "data": response.json()
+            }
+        else:
+            return {
+                "status": "error",
+                "code": response.status_code,
+                "message": response.text
+            }
+    except Exception as e:
+        print(json.dumps({"event": "update_user", "Error": str(e)}))
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+
+def generate_update_payment_link(customer_id: str, subscription_id: str) -> dict:
+    """
+    Genera un link seguro para que el cliente actualice su método de pago.
+    """
+    try:
+        url = f"{PADDLE_API_BASE}/customers/{customer_id}/portal-sessions"
+        print(f"url: {url}")
+        headers = {
+            "Authorization": f"Bearer {PADDLE_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "subscription_ids": [
+                subscription_id
+            ]
+        }  # Se puede enviar metadata extra si quieres
+
+        response = requests.post(url, headers=headers, json=payload)
+        if response.status_code == 201:
+            response_body = response.json()
+            data = response_body.get("data", {})
+            urls = data.get("urls", {})
+            general_url = urls.get("general", "")
+            result = {
+                "customer_portal_url": general_url.get("overview", ""),
+            }
+            return {
+                'statusCode': 200,
+                'headers': {'Access-Control-Allow-Origin': '*'},
+                'body': json.dumps(result, default=str)
+            }
+        else:
+            return {
+                "status": "error",
+                "code": response.status_code,
+                "message": response.text
+            }
+    except Exception as e:
+        print(json.dumps({"event": "update_user", "Error": str(e)}))
+        return {
+            "status": "error",
+            "message": str(e)
         }

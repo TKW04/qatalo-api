@@ -19,14 +19,6 @@ def customers_routes(path, method, event, user_name, user_id):
     if path == "/customers" and method == 'POST':
         return create_customer(event=event)
 
-    # print("path:", path)
-    # match_transaction = re.fullmatch(
-    #     r'/customers/transactions/([^/]+)', path)
-    # if match_transaction and method == 'GET':
-    #     customer_id = match_transaction.group(1)
-    #     print("customer_id:", customer_id)
-    #     return get_customer_transaction(customer_id=customer_id)
-
     match = re.fullmatch(r'/customers/([^/]+)', path)
     if match:
         customer_id = match.group(1)
