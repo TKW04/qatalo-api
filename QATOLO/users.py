@@ -1,18 +1,29 @@
 import json
 import re
-from zoneinfo import ZoneInfo
 import boto3
 import os
+
+from zoneinfo import ZoneInfo
 from datetime import datetime
+from SendMails.mails import send_forgot_password_email
 
 cognito = boto3.client('cognito-idp')
 USER_POOL_ID = os.environ.get('USER_POOL_ID')
+FRONT_END_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
 
 
 def users_routes(path, method, event):
 
     if path == "/users" and method == 'POST':
         return register_user(event=event)
+    if path == "/users/change-password" and method == 'POST':
+        return reset_password(event=event)
+
+    match_forgot = re.fullmatch(r'/users/forgot-password/([^/]+)', path)
+    if match_forgot:
+        user_name = match_forgot.group(1)
+        if method == 'POST':
+            return forgot_password(user_name=user_name)
 
     match = re.fullmatch(r'/users/([^/]+)', path)
     if match:
@@ -160,25 +171,51 @@ def register_user(event):
         }
 
 
-def change_password(username, event):
+def forgot_password(user_name):
+    try:
+
+        user = cognito.admin_get_user(
+            UserPoolId=USER_POOL_ID,
+            Username=user_name
+        )
+
+        # Formatear los atributos
+        attrs = {attr['Name']: attr['Value']
+                 for attr in user['UserAttributes']}
+        resetLink = f"{FRONT_END_URL}/reset-password/{attrs.get('sub')}"
+        return send_forgot_password_email(to_address=attrs.get('email'),
+                                          to_name=f"{attrs.get('given_name')} {attrs.get('family_name')}",
+                                          resetLink=resetLink)
+
+    except Exception as e:
+        print(json.dumps({"event": "forgot_password", "Error": str(e)}))
+        return {
+            'statusCode': 500,
+            'headers': {'Access-Control-Allow-Origin': '*'},
+            'body': json.dumps({'message': str(e)})
+        }
+
+
+def reset_password(event):
     try:
         body = json.loads(event.get('body', '{}'))
-        nueva_clave = body['password']
+        user_name = body.get('username')
+        new_password = body.get('password')
         cognito.admin_set_user_password(
             UserPoolId=USER_POOL_ID,
-            Username=username,
-            Password=nueva_clave,
+            Username=user_name,
+            Password=new_password,
             Permanent=True
         )
 
         return {
             'statusCode': 200,
             'headers': {'Access-Control-Allow-Origin': '*'},
-            'body': json.dumps({'message': 'Contraseña actualizada correctamente'})
+            'body': json.dumps({'message': 'Contraseña restablecida correctamente'})
         }
 
     except Exception as e:
-        print(json.dumps({"event": "change_password", "Error": str(e)}))
+        print(json.dumps({"event": "reset_password", "Error": str(e)}))
         return {
             'statusCode': 500,
             'headers': {'Access-Control-Allow-Origin': '*'},
