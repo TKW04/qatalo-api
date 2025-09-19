@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Orden Recibida - {{business_name}}</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        background-color: #f8f9fa;
+        line-height: 1.6;
+        color: #333;
+      }
+
+      .email-container {
+        max-width: 600px;
+        margin: 0 auto;
+        background-color: #ffffff;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+        border-radius: 10px;
+        overflow: hidden;
+      }
+
+      .header {
+        background: linear-gradient(135deg, #113f67 0%, #34699a 100%);
+        padding: 40px 30px;
+        text-align: center;
+        position: relative;
+        overflow: hidden;
+      }
+
+      .header::before {
+        content: "";
+        position: absolute;
+        top: -50%;
+        left: -50%;
+        width: 200%;
+        height: 200%;
+        background: radial-gradient(
+          circle,
+          rgba(253, 245, 170, 0.1) 0%,
+          transparent 70%
+        );
+        animation: rotate 20s linear infinite;
+      }
+
+      @keyframes rotate {
+        0% {
+          transform: rotate(0deg);
+        }
+        100% {
+          transform: rotate(360deg);
+        }
+      }
+
+      .logo {
+        color: #fdf5aa;
+        font-size: 2.2rem;
+        font-weight: bold;
+        letter-spacing: 2px;
+        position: relative;
+        z-index: 2;
+        margin-bottom: 15px;
+      }
+
+      .status-badge {
+        background: rgba(253, 245, 170, 0.9);
+        border: 2px solid #fdf5aa;
+        color: #113f67;
+        padding: 10px 25px;
+        border-radius: 25px;
+        font-size: 1rem;
+        font-weight: 600;
+        position: relative;
+        z-index: 2;
+        display: inline-block;
+        margin-top: 10px;
+      }
+
+      .content {
+        padding: 40px 30px;
+      }
+
+      .greeting {
+        font-size: 1.5rem;
+        color: #113f67;
+        margin-bottom: 20px;
+        font-weight: 600;
+        text-align: center;
+      }
+
+      .confirmation-message {
+        color: #34699a;
+        font-size: 1.1rem;
+        margin-bottom: 30px;
+        line-height: 1.7;
+        text-align: center;
+      }
+
+      .order-summary {
+        background: linear-gradient(
+          135deg,
+          rgba(88, 160, 200, 0.05) 0%,
+          rgba(253, 245, 170, 0.05) 100%
+        );
+        border: 1px solid rgba(88, 160, 200, 0.2);
+        border-radius: 12px;
+        padding: 25px;
+        margin: 30px 0;
+      }
+
+      .order-title {
+        color: #113f67;
+        font-size: 1.3rem;
+        font-weight: 600;
+        margin-bottom: 20px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .order-details {
+        display: grid;
+        gap: 15px;
+      }
+
+      .detail-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 10px 0;
+        border-bottom: 1px dashed rgba(88, 160, 200, 0.2);
+      }
+
+      .detail-row:last-child {
+        border-bottom: none;
+        font-weight: 600;
+        font-size: 1.1rem;
+        color: #113f67;
+        margin-top: 10px;
+        padding-top: 15px;
+        border-top: 2px solid rgba(88, 160, 200, 0.2);
+      }
+
+      .detail-label {
+        color: #34699a;
+        font-weight: 500;
+      }
+
+      .detail-value {
+        color: #113f67;
+        font-weight: 600;
+      }
+
+      .cta-section {
+        text-align: center;
+        margin: 40px 0;
+        padding: 30px;
+        background: linear-gradient(
+          135deg,
+          rgba(253, 245, 170, 0.1) 0%,
+          rgba(88, 160, 200, 0.1) 100%
+        );
+        border-radius: 12px;
+        border: 1px solid rgba(88, 160, 200, 0.2);
+      }
+
+      .cta-title {
+        color: #113f67;
+        font-size: 1.4rem;
+        font-weight: 600;
+        margin-bottom: 15px;
+      }
+
+      .cta-description {
+        color: #34699a;
+        font-size: 1rem;
+        margin-bottom: 25px;
+        line-height: 1.6;
+      }
+
+      .upload-button {
+        display: inline-block;
+        background: linear-gradient(135deg, #58a0c8 0%, #34699a 100%);
+        color: white;
+        padding: 18px 45px;
+        text-decoration: none;
+        border-radius: 50px;
+        font-size: 1.2rem;
+        font-weight: 600;
+        box-shadow: 0 4px 15px rgba(88, 160, 200, 0.3);
+        transition: all 0.3s ease;
+        position: relative;
+        overflow: hidden;
+      }
+
+      .upload-button::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: -100%;
+        width: 100%;
+        height: 100%;
+        background: linear-gradient(
+          90deg,
+          transparent,
+          rgba(255, 255, 255, 0.2),
+          transparent
+        );
+        transition: left 0.5s;
+      }
+
+      .upload-button:hover::before {
+        left: 100%;
+      }
+
+      .upload-button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(88, 160, 200, 0.4);
+      }
+
+      .payment-info {
+        background: rgba(253, 245, 170, 0.2);
+        border: 1px solid #fdf5aa;
+        padding: 20px;
+        border-radius: 8px;
+        margin: 30px 0;
+      }
+
+      .payment-info-title {
+        color: #113f67;
+        font-weight: 600;
+        margin-bottom: 15px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 1.1rem;
+      }
+
+      .payment-methods {
+        display: grid;
+        gap: 10px;
+        margin-top: 15px;
+      }
+
+      .payment-method {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        color: #34699a;
+        font-size: 0.95rem;
+      }
+
+      .payment-method strong {
+        color: #113f67;
+      }
+
+      .status-timeline {
+        margin: 30px 0;
+        padding: 25px;
+        background: linear-gradient(
+          135deg,
+          rgba(88, 160, 200, 0.05) 0%,
+          rgba(253, 245, 170, 0.05) 100%
+        );
+        border-radius: 12px;
+        border-left: 4px solid #58a0c8;
+      }
+
+      .timeline-title {
+        color: #113f67;
+        font-weight: 600;
+        margin-bottom: 20px;
+        font-size: 1.2rem;
+      }
+
+      .timeline-item {
+        display: flex;
+        align-items: center;
+        margin-bottom: 15px;
+        position: relative;
+      }
+
+      .timeline-status {
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        margin-right: 15px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.8rem;
+        font-weight: bold;
+      }
+
+      .timeline-status.completed {
+        background: #58a0c8;
+        color: white;
+      }
+
+      .timeline-status.pending {
+        background: #fdf5aa;
+        color: #113f67;
+      }
+
+      .timeline-status.upcoming {
+        background: #e9ecef;
+        color: #6c757d;
+      }
+
+      .timeline-text {
+        color: #34699a;
+        font-size: 0.95rem;
+      }
+
+      .timeline-text.completed {
+        color: #113f67;
+        font-weight: 500;
+      }
+
+      .important-note {
+        background: linear-gradient(
+          135deg,
+          rgba(253, 245, 170, 0.15) 0%,
+          rgba(88, 160, 200, 0.05) 100%
+        );
+        border: 1px solid rgba(253, 245, 170, 0.5);
+        padding: 20px;
+        border-radius: 8px;
+        margin: 25px 0;
+      }
+
+      .note-title {
+        color: #113f67;
+        font-weight: 600;
+        margin-bottom: 10px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .note-text {
+        color: #34699a;
+        font-size: 0.9rem;
+        line-height: 1.5;
+      }
+
+      .footer {
+        background: linear-gradient(135deg, #113f67 0%, #34699a 100%);
+        padding: 30px;
+        text-align: center;
+      }
+
+      .footer-text {
+        color: #58a0c8;
+        font-size: 0.9rem;
+        margin-bottom: 15px;
+      }
+
+      .social-links {
+        display: flex;
+        justify-content: center;
+        gap: 15px;
+        margin-bottom: 20px;
+      }
+
+      .social-link {
+        width: 40px;
+        height: 40px;
+        background: rgba(253, 245, 170, 0.1);
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #fdf5aa;
+        text-decoration: none;
+        transition: all 0.3s ease;
+      }
+
+      .social-link:hover {
+        background: rgba(253, 245, 170, 0.2);
+        transform: translateY(-2px);
+      }
+
+      .copyright {
+        color: #58a0c8;
+        font-size: 0.8rem;
+        opacity: 0.8;
+      }
+
+      /* Responsive Design */
+      @media only screen and (max-width: 600px) {
+        .email-container {
+          margin: 0;
+          border-radius: 0;
+        }
+
+        .header,
+        .content,
+        .footer {
+          padding: 20px;
+        }
+
+        .logo {
+          font-size: 1.8rem;
+        }
+
+        .greeting {
+          font-size: 1.3rem;
+        }
+
+        .confirmation-message {
+          font-size: 1rem;
+        }
+
+        .upload-button {
+          padding: 16px 35px;
+          font-size: 1.1rem;
+        }
+
+        .detail-row {
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 5px;
+        }
+
+        .payment-method {
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 5px;
+        }
+
+        .social-links {
+          gap: 10px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="email-container">
+      <!-- Header -->
+      <div class="header">
+        <div class="logo">
+          <img
+            src="https://qatalo.s3.us-east-1.amazonaws.com/qatalo.png"
+            alt="CatalogQR Logo"
+            width="200"
+          />
+        </div>
+        <div class="status-badge">✅ Orden Recibida</div>
+      </div>
+
+      <!-- Content -->
+      <div class="content">
+        <div class="greeting">¡Gracias por tu orden!</div>
+
+        <div class="confirmation-message">
+          Hemos recibido exitosamente tu orden y está siendo procesada. Para
+          continuar con el proceso, necesitamos que subas tu comprobante de
+          pago.
+        </div>
+
+        <!-- Order Summary -->
+        <div class="order-summary">
+          <div class="order-title">📋 Resumen de tu orden</div>
+          <div class="order-details">
+            <div class="detail-row">
+              <span class="detail-label">Número de orden:</span>
+              <span class="detail-value">#{{ transaction_id }}</span>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Fecha:</span>
+              <span class="detail-value">{{ order_date }}</span>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Producto:</span>
+              <span class="detail-value">{{ product_name }}</span>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Cantidad:</span>
+              <span class="detail-value">{{ quantity }}</span>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Total a pagar:</span>
+              <span class="detail-value"
+                >${{ total_amount }} {{ currency }}</span
+              >
+            </div>
+          </div>
+        </div>
+
+        <!-- CTA Section -->
+        <div class="cta-section">
+          <div class="cta-title">📤 Sube tu comprobante de pago</div>
+          <div class="cta-description">
+            Haz clic en el botón de abajo y sube una imagen clara de tu
+            comprobante de pago.
+          </div>
+          <a href="{{ upload_link }}" class="upload-button"
+            >Subir comprobante</a
+          >
+        </div>
+
+        <!-- Status Timeline -->
+        <div class="status-timeline">
+          <div class="timeline-title">📈 Estado de tu orden</div>
+
+          <div class="timeline-item">
+            <div class="timeline-status completed">✓</div>
+            <div class="timeline-text completed">
+              Orden recibida y confirmada
+            </div>
+          </div>
+
+          <div class="timeline-item">
+            <div class="timeline-status pending">2</div>
+            <div class="timeline-text">Esperando comprobante de pago</div>
+          </div>
+
+          <div class="timeline-item">
+            <div class="timeline-status upcoming">3</div>
+            <div class="timeline-text upcoming">Verificación de pago</div>
+          </div>
+
+          <div class="timeline-item">
+            <div class="timeline-status upcoming">4</div>
+            <div class="timeline-text upcoming">Entrega</div>
+          </div>
+        </div>
+
+        <!-- Important Note -->
+        <div class="important-note">
+          <div class="note-title">⚠️ Información importante</div>
+          <div class="note-text">
+            • El comprobante debe mostrar claramente el monto, fecha y método de
+            pago<br />
+            • Formatos aceptados: JPG, PNG (máximo 5MB)<br />
+            • Verificaremos tu pago en un máximo de 24 horas<br />
+            • Recibirás un email de confirmación una vez tu pago haya sido
+            verificado
+          </div>
+        </div>
+
+        <div style="margin-top: 30px; color: #34699a; text-align: center">
+          <strong>¿Tienes preguntas?</strong><br />
+          Contáctanos en:<br />
+          Email: <strong style="color: #113f67">{{ business_email }}</strong><br/>
+          Teléfono: <strong style="color: #113f67">{{ business_phone }}</strong>
+        </div>
+      </div>
+
+      <!-- Footer -->
+      <div class="footer">
+        <div class="copyright">
+          © 2025 Qatalo. Todos los derechos reservados.<br />
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

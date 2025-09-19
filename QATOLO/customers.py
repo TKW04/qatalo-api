@@ -2,6 +2,7 @@ import base64
 import io
 import re
 import traceback
+from SendMails.mails import create_order_email
 import boto3
 import json
 import os
@@ -15,7 +16,10 @@ from decimal import Decimal
 dynamodb = boto3.resource('dynamodb', region_name=os.getenv('AWS_REGION'))
 customers_table = dynamodb.Table("qatalo.customers")
 business_table = dynamodb.Table("qatalo.business")
+payment_methods_table = dynamodb.Table("qatalo.payment_methods")
+
 s3 = boto3.client('s3')
+FRONT_END_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
 
 
 def customers_routes(path, method, event, user_name, user_id):
@@ -150,20 +154,20 @@ def create_customer(event):
                     "customer_id", "") == customer_id)
 
                 transaction = body.get('transaction', {})
-                payment_method = transaction.get('payment_method', {})
+
+                pm = transaction.get('payment_method', {})
+                payment_method = payment_methods_table.get_item(
+                    Key={"payment_method_id": pm.get('payment_method_id', '')})
+
+                transaction_id = str(uuid.uuid4())
                 transactions.append({
-                    "transaction_id": str(uuid.uuid4()),
+                    "transaction_id": transaction_id,
                     "product_id": transaction.get('product_id', ''),
                     "product_name": transaction.get('product_name', ''),
                     "quantity": transaction.get('quantity', 1),
                     "price": Decimal(transaction.get("price", 0.00)),
-                    "status": "PENDING",
-                    "payment_method": {
-                        "payment_method_id": payment_method.get('payment_method_id', ''),
-                        "payment_type": payment_method.get('payment_type', ''),
-                        "currency": payment_method.get('currency', ''),
-                        "payment_link": payment_method.get('payment_link', '')
-                    },
+                    "status": "Pendiente de pago",
+                    "payment_method": payment_method.get("Item", {}),
                     "create_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     "create_user": body.get('email', '')
                 })
@@ -180,10 +184,37 @@ def create_customer(event):
                         ':update_user': body.get('email', '')
                     },
                     ReturnValues="UPDATED_NEW")
+
+                business_response = business_table.get_item(
+                    Key={"business_id": business_id})
+                business_email = ""
+                business_phone = ""
+                if "Item" in business_response:
+                    business_email = business_response["Item"].get("email", "")
+                    business_phone = business_response["Item"].get("phone", "")
+
+                payment_link = f"{FRONT_END_URL}/paymentValidation/{customer_id}"
+
+                order_details = {
+                    "business_name": business_response["Item"].get("business_name", "Qatalo"),
+                    "transaction_id": transaction_id,
+                    "order_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "product_name": transaction.get('product_name', ''),
+                    "quantity": transaction.get('quantity', 1),
+                    "total_amount": str(transaction.get("price", 0.00) * transaction.get("quantity", 1)),
+                    "currency": transaction.get('payment_method', {}).get('currency', ''),
+                    "upload_link": payment_link,
+                    "business_email": business_email,
+                    "business_phone": business_phone
+                }
+                return create_order_email(body.get('email'),
+                                          to_name=f"{body.get('given_name')} {body.get('family_name')}",
+                                          order_details=order_details)
             else:
                 return create_customer_transaction(body=body)
         else:
             return create_customer_transaction(body=body)
+
     except Exception as e:
         print(json.dumps({"event": "create_customer", "Error": str(e)}))
         return {
@@ -196,27 +227,28 @@ def create_customer(event):
 def create_customer_transaction(body):
     transactions = []
     transaction = body.get('transaction', {})
-    payment_method = transaction.get('payment_method', {})
+    pm = transaction.get('payment_method', {})
+    payment_method = payment_methods_table.get_item(
+        Key={"payment_method_id": pm.get('payment_method_id', '')})
+    
+    transaction_id = str(uuid.uuid4())
     transactions.append({
-        "transaction_id": str(uuid.uuid4()),
+        "transaction_id": transaction_id,
         "product_id": transaction.get('product_id', ''),
         "product_name": transaction.get('product_name', ''),
         "quantity": transaction.get('quantity', 1),
         "price": Decimal(transaction.get("price", 0.00)),
-        "status": "PENDING",
-        "payment_method": {
-            "payment_method_id": payment_method.get('payment_method_id', ''),
-            "payment_type": payment_method.get('payment_type', ''),
-            "currency": payment_method.get('currency', ''),
-            "payment_link": payment_method.get('payment_link', '')
-        },
+        "status": "Pendiente de pago",
+        "payment_method": payment_method.get("Item", {}),
         "create_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "create_user": body.get('email', '')
     })
+    customer_id = str(uuid.uuid4())
+    business_id = body.get('business_id', '')
     customers_table.put_item(
         Item={
-            "customer_id": str(uuid.uuid4()),
-            "business_id": body.get('business_id', ''),
+            "customer_id": customer_id,
+            "business_id": business_id,
             "given_name": body.get('given_name', ''),
             "family_name": body.get('family_name', ''),
             "email": body.get('email', ''),
@@ -228,11 +260,31 @@ def create_customer_transaction(body):
             "update_user": body.get('email', '')
         }
     )
-    return {
-        'statusCode': 200,
-        'headers': {'Access-Control-Allow-Origin': '*'},
-        'body': json.dumps({'message': 'Cliente creado correctamente'})
+    business_response = business_table.get_item(
+        Key={"business_id": business_id})
+    business_email = ""
+    business_phone = ""
+    if "Item" in business_response:
+        business_email = business_response["Item"].get("email", "")
+        business_phone = business_response["Item"].get("phone", "")
+
+    payment_link = f"{FRONT_END_URL}/paymentValidation/{customer_id}"
+
+    order_details = {
+        "business_name": business_response["Item"].get("business_name", "Qatalo"),
+        "transaction_id": transaction_id,
+        "order_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "product_name": transaction.get('product_name', ''),
+        "quantity": transaction.get('quantity', 1),
+        "total_amount": str(transaction.get("price", 0.00) * transaction.get("quantity", 1)),
+        "currency": transaction.get('payment_method', {}).get('currency', ''),
+        "upload_link": payment_link,
+        "business_email": business_email,
+        "business_phone": business_phone
     }
+    return create_order_email(body.get('email'),
+                              to_name=f"{body.get('given_name')} {body.get('family_name')}",
+                              order_details=order_details)
 
 
 def update_customer(event, user_name, customer_id, user_id):

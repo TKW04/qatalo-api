@@ -5,7 +5,7 @@ import os
 
 from zoneinfo import ZoneInfo
 from datetime import datetime
-from SendMails.mails import send_forgot_password_email
+from SendMails.mails import send_forgot_password_email, welcome_email
 
 cognito = boto3.client('cognito-idp')
 USER_POOL_ID = os.environ.get('USER_POOL_ID')
@@ -156,11 +156,10 @@ def register_user(event):
             Username=body.get('email')
         )
 
-        return {
-            'statusCode': 200,
-            'headers': {'Access-Control-Allow-Origin': '*'},
-            'body': json.dumps({'message': 'Usuario actualizado correctamente'})
-        }
+        loginLink = f"{FRONT_END_URL}/login"
+        return welcome_email(body.get('email'),
+                             to_name=f"{body.get('given_name')} {body.get('family_name')}",
+                             loginLink=loginLink)
 
     except Exception as e:
         print(json.dumps({"event": "create_user", "Error": str(e)}))
