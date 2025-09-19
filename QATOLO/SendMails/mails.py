@@ -82,7 +82,7 @@ def create_order_email(to_address, to_name, order_details):
 
     try:
         mail = emails.NewEmail(MAIL_API_TOKEN)
-        template = env.get_template("orden_request.html")
+        template = env.get_template("order_request.html")
         response = mail.send(
             {
                 "from": {
@@ -104,6 +104,49 @@ def create_order_email(to_address, to_name, order_details):
                                         total_amount=order_details['total_amount'],
                                         currency=order_details['currency'],
                                         upload_link=order_details['upload_link'],
+                                        business_email=order_details['business_email'],
+                                        business_phone=order_details['business_phone'])
+            }
+        )
+        return {
+            'statusCode': 200,
+            'headers': {'Access-Control-Allow-Origin': '*'}
+        }
+
+    except Exception as e:
+        print(json.dumps({"event": "create_orden_email", "Error": str(e)}))
+        return {
+            'statusCode': 500,
+            'headers': {'Access-Control-Allow-Origin': '*'},
+            'body': json.dumps({'message': str(e)})
+        }
+
+
+def cancel_order_email(to_address, to_name, order_details):
+
+    try:
+        mail = emails.NewEmail(MAIL_API_TOKEN)
+        template = env.get_template("order_cancel.html")
+        response = mail.send(
+            {
+                "from": {
+                    "email": "info@qatalo.online",
+                    "name": "Qatalo Support"
+                },
+                "to": [
+                    {
+                        "email": to_address,
+                        "name": to_name
+                    }
+                ],
+                "subject": "Confirmación de Orden - Qatalo",
+                "html": template.render(business_logo_url=order_details.get('business_logo_url', ''),
+                                        transaction_id=order_details['transaction_id'],
+                                        order_date=order_details['order_date'],
+                                        cancellation_date=order_details['cancellation_date'],
+                                        product_name=order_details['product_name'],
+                                        cancellation_reason=order_details['cancellation_reason'],
+                                        business_website_url=order_details['business_website_url'],
                                         business_email=order_details['business_email'],
                                         business_phone=order_details['business_phone'])
             }

@@ -13,14 +13,16 @@ from requests_toolbelt.multipart import decoder
 from boto3.dynamodb.conditions import Attr
 
 dynamodb = boto3.resource('dynamodb', region_name=os.getenv('AWS_REGION'))
+cognito = boto3.client('cognito-idp')
 business_table = dynamodb.Table("qatalo.business")
+USER_POOL_ID = os.environ.get('USER_POOL_ID')
 s3 = boto3.client('s3')
 
 
 def business_routes(path, method, event, user_name, user_id):
     if path == '/businesses' and method == 'POST':
         return create_business(event=event, user_name=user_name, user_id=user_id)
-    
+
     if path == '/businesses' and method == 'GET':
         return get_business(user_id=user_id)
 
@@ -71,6 +73,7 @@ def get_business(user_id: str):
             'body': json.dumps({'message': str(e)})
         }
 
+
 def get_business_by_slug(slug: str):
     """
     Retrieve a business by its slug.
@@ -80,8 +83,18 @@ def get_business_by_slug(slug: str):
             FilterExpression=Attr('business_slug').eq(slug)
         )
         if "Items" in response and len(response["Items"]) > 0:
+            user = cognito.admin_get_user(
+                UserPoolId=USER_POOL_ID,
+                Username=response["Items"][0]["user_id"]
+            )
+
+            # Formatear los atributos
+            user_attrs = {attr['Name']: attr['Value']
+                          for attr in user['UserAttributes']}
+
             business = {
                 "business_id": response["Items"][0]["business_id"],
+                "status": user_attrs.get('custom:transaction_status'),
                 "name": response["Items"][0]["business_name"],
                 "description": response["Items"][0]["business_description"],
                 "slug": response["Items"][0]["business_slug"],

@@ -2,7 +2,7 @@ import base64
 import io
 import re
 import traceback
-from SendMails.mails import create_order_email
+from SendMails.mails import cancel_order_email, create_order_email
 import boto3
 import json
 import os
@@ -14,9 +14,11 @@ from datetime import datetime
 from decimal import Decimal
 
 dynamodb = boto3.resource('dynamodb', region_name=os.getenv('AWS_REGION'))
+cognito = boto3.client('cognito-idp')
 customers_table = dynamodb.Table("qatalo.customers")
 business_table = dynamodb.Table("qatalo.business")
 payment_methods_table = dynamodb.Table("qatalo.payment_methods")
+USER_POOL_ID = os.environ.get('USER_POOL_ID')
 
 s3 = boto3.client('s3')
 FRONT_END_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
@@ -28,6 +30,8 @@ def customers_routes(path, method, event, user_name, user_id):
         return get_customers_by_user_id(user_id=user_id)
     if path == "/customers" and method == 'POST':
         return create_customer(event=event)
+    if path == "/customers/transactions/cancel" and method == 'POST':
+        return cancel_transaction(event=event)
 
     match = re.fullmatch(r'/customers/([^/]+)', path)
     if match:
@@ -95,11 +99,14 @@ def get_customer_transaction(customer_id: str):
     try:
         response = customers_table.get_item(Key={"customer_id": customer_id})
         if "Item" in response:
-            item = response["Item"]\
+            item = response["Item"]
+            business = business_table.get_item(
+                Key={"business_id": item.get("business_id", "")})
 
             customer = {
                 "customer_id": item.get("customer_id", ""),
                 "business_id": item.get("business_id", ""),
+                "business_logo_url": business.get("Item", {}).get("business_logo_url", ""),
                 "given_name": item.get("given_name", ""),
                 "family_name": item.get("family_name", ""),
                 "email": item.get("email", ""),
@@ -187,16 +194,22 @@ def create_customer(event):
 
                 business_response = business_table.get_item(
                     Key={"business_id": business_id})
-                business_email = ""
-                business_phone = ""
-                if "Item" in business_response:
-                    business_email = business_response["Item"].get("email", "")
-                    business_phone = business_response["Item"].get("phone", "")
+                business = business_response["Item"]
+
+                user = cognito.admin_get_user(
+                    UserPoolId=USER_POOL_ID,
+                    Username=business.get("user_id", "")
+                )
+
+                # Formatear los atributos
+                user_attrs = {attr['Name']: attr['Value']
+                              for attr in user['UserAttributes']}
 
                 payment_link = f"{FRONT_END_URL}/paymentValidation/{customer_id}"
 
                 order_details = {
-                    "business_name": business_response["Item"].get("business_name", "Qatalo"),
+                    "business_name": business.get("business_name", "Qatalo"),
+                    "business_logo_url": business.get("business_logo_url", ""),
                     "transaction_id": transaction_id,
                     "order_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     "product_name": transaction.get('product_name', ''),
@@ -204,8 +217,8 @@ def create_customer(event):
                     "total_amount": str(transaction.get("price", 0.00) * transaction.get("quantity", 1)),
                     "currency": transaction.get('payment_method', {}).get('currency', ''),
                     "upload_link": payment_link,
-                    "business_email": business_email,
-                    "business_phone": business_phone
+                    "business_email": user_attrs.get("email", "Qatalo"),
+                    "business_phone": business.get("business_phone", "Qatalo")
                 }
                 return create_order_email(body.get('email'),
                                           to_name=f"{body.get('given_name')} {body.get('family_name')}",
@@ -230,7 +243,7 @@ def create_customer_transaction(body):
     pm = transaction.get('payment_method', {})
     payment_method = payment_methods_table.get_item(
         Key={"payment_method_id": pm.get('payment_method_id', '')})
-    
+
     transaction_id = str(uuid.uuid4())
     transactions.append({
         "transaction_id": transaction_id,
@@ -262,16 +275,24 @@ def create_customer_transaction(body):
     )
     business_response = business_table.get_item(
         Key={"business_id": business_id})
-    business_email = ""
-    business_phone = ""
-    if "Item" in business_response:
-        business_email = business_response["Item"].get("email", "")
-        business_phone = business_response["Item"].get("phone", "")
+    business = business_response["Item"]
+
+    user = cognito.admin_get_user(
+        UserPoolId=USER_POOL_ID,
+        Username=business.get("user_id", "")
+    )
+
+    # Formatear los atributos
+    user_attrs = {attr['Name']: attr['Value']
+                  for attr in user['UserAttributes']}
+
+    payment_link = f"{FRONT_END_URL}/paymentValidation/{customer_id}"
 
     payment_link = f"{FRONT_END_URL}/paymentValidation/{customer_id}"
 
     order_details = {
-        "business_name": business_response["Item"].get("business_name", "Qatalo"),
+        "business_name": business.get("business_name", "Qatalo"),
+        "business_logo_url": business.get("business_logo_url", ""),
         "transaction_id": transaction_id,
         "order_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "product_name": transaction.get('product_name', ''),
@@ -279,8 +300,8 @@ def create_customer_transaction(body):
         "total_amount": str(transaction.get("price", 0.00) * transaction.get("quantity", 1)),
         "currency": transaction.get('payment_method', {}).get('currency', ''),
         "upload_link": payment_link,
-        "business_email": business_email,
-        "business_phone": business_phone
+        "business_email": user_attrs.get("email", "Qatalo"),
+        "business_phone": business.get("business_phone", "Qatalo")
     }
     return create_order_email(body.get('email'),
                               to_name=f"{body.get('given_name')} {body.get('family_name')}",
@@ -433,21 +454,14 @@ def cancel_transaction(event):
 
         response = customers_table.get_item(Key={"customer_id": customer_id})
         if "Item" in response:
-            item = response["Item"]
-
-            customer = {
-                "customer_id": item.get("customer_id", ""),
-                "business_id": item.get("business_id", ""),
-                "given_name": item.get("given_name", ""),
-                "family_name": item.get("family_name", ""),
-                "email": item.get("email", ""),
-                "phone": item.get("phone", ""),
-                "transactions": item.get("transactions", [])
-            }
+            customer = response["Item"]
             transaction = next((tran for tran in customer.get("transactions", []) if tran.get(
                 "transaction_id", "") == transaction_id), None)
             if transaction:
                 transaction["status"] = "Cancelada"
+                transaction["cancellation_reason"] = body.get(
+                    'cancellation_reason', 'No especificada')
+
                 customers_table.update_item(
                     Key={"customer_id": customer.get("customer_id", "")},
                     UpdateExpression="SET transactions = :transactions, update_date = :update_date, update_user = :update_user",
@@ -458,11 +472,36 @@ def cancel_transaction(event):
                     },
                     ReturnValues="UPDATED_NEW"
                 )
-                return {
-                    'statusCode': 200,
-                    'headers': {'Access-Control-Allow-Origin': '*'},
-                    'body': json.dumps({'message': 'Transacción cancelada correctamente'})
+                business_id = customer.get("business_id", "")
+                business_response = business_table.get_item(
+                    Key={"business_id": business_id})
+                business = business_response["Item"]
+
+                user = cognito.admin_get_user(
+                    UserPoolId=USER_POOL_ID,
+                    Username=business.get("user_id", "")
+                )
+
+                # Formatear los atributos
+                user_attrs = {attr['Name']: attr['Value']
+                              for attr in user['UserAttributes']}
+
+                business_website_url = f"{FRONT_END_URL}/catalog/{business.get('business_slug', '')}"
+
+                order_details = {
+                    "business_logo_url": business.get("business_logo_url", ""),
+                    "transaction_id": transaction_id,
+                    "order_date": transaction.get("create_date", ""),
+                    "cancellation_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "product_name": transaction.get('product_name', ''),
+                    "cancellation_reason": body.get('cancellation_reason', 'No especificada'),
+                    "business_website_url": business_website_url,
+                    "business_email": user_attrs.get("email", ""),
+                    "business_phone":  business.get("business_phone", "")
                 }
+                return cancel_order_email(customer.get('email'),
+                                          to_name=f"{customer.get('given_name')} {customer.get('family_name')}",
+                                          order_details=order_details)
             else:
                 return {
                     'statusCode': 404,

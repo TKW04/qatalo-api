@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Orden Cancelada - Qatalo</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        background-color: #f8f9fa;
+        line-height: 1.6;
+        color: #333;
+      }
+
+      .email-container {
+        max-width: 600px;
+        margin: 0 auto;
+        background-color: #ffffff;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+        border-radius: 10px;
+        overflow: hidden;
+      }
+
+      .header {
+        background: linear-gradient(135deg, #113f67 0%, #34699a 100%);
+        padding: 40px 30px;
+        text-align: center;
+        position: relative;
+        overflow: hidden;
+      }
+
+      .header::before {
+        content: "";
+        position: absolute;
+        top: -50%;
+        left: -50%;
+        width: 200%;
+        height: 200%;
+        background: radial-gradient(
+          circle,
+          rgba(253, 245, 170, 0.1) 0%,
+          transparent 70%
+        );
+        animation: rotate 20s linear infinite;
+      }
+
+      @keyframes rotate {
+        0% {
+          transform: rotate(0deg);
+        }
+        100% {
+          transform: rotate(360deg);
+        }
+      }
+
+      .logo {
+        color: #fdf5aa;
+        font-size: 2.2rem;
+        font-weight: bold;
+        letter-spacing: 2px;
+        position: relative;
+        z-index: 2;
+        margin-bottom: 15px;
+      }
+
+      .status-badge {
+        background: rgba(220, 53, 69, 0.15);
+        border: 2px solid rgba(220, 53, 69, 0.6);
+        color: #fdf5aa;
+        padding: 10px 25px;
+        border-radius: 25px;
+        font-size: 1rem;
+        font-weight: 600;
+        position: relative;
+        z-index: 2;
+        display: inline-block;
+        margin-top: 10px;
+      }
+
+      .content {
+        padding: 40px 30px;
+      }
+
+      .greeting {
+        font-size: 1.5rem;
+        color: #113f67;
+        margin-bottom: 20px;
+        font-weight: 600;
+        text-align: center;
+      }
+
+      .cancellation-message {
+        color: #34699a;
+        font-size: 1.1rem;
+        margin-bottom: 30px;
+        line-height: 1.7;
+        text-align: center;
+      }
+
+      .order-summary {
+        background: linear-gradient(
+          135deg,
+          rgba(220, 53, 69, 0.05) 0%,
+          rgba(253, 245, 170, 0.05) 100%
+        );
+        border: 1px solid rgba(220, 53, 69, 0.2);
+        border-radius: 12px;
+        padding: 25px;
+        margin: 30px 0;
+      }
+
+      .order-title {
+        color: #113f67;
+        font-size: 1.3rem;
+        font-weight: 600;
+        margin-bottom: 20px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .order-details {
+        display: grid;
+        gap: 15px;
+      }
+
+      .detail-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 10px 0;
+        border-bottom: 1px dashed rgba(220, 53, 69, 0.2);
+      }
+
+      .detail-row:last-child {
+        border-bottom: none;
+        font-weight: 600;
+        font-size: 1.1rem;
+        color: #dc3545;
+        margin-top: 10px;
+        padding-top: 15px;
+        border-top: 2px solid rgba(220, 53, 69, 0.2);
+      }
+
+      .detail-label {
+        color: #34699a;
+        font-weight: 500;
+      }
+
+      .detail-value {
+        color: #113f67;
+        font-weight: 600;
+      }
+
+      .cancellation-reason {
+        background: linear-gradient(
+          135deg,
+          rgba(253, 245, 170, 0.15) 0%,
+          rgba(88, 160, 200, 0.05) 100%
+        );
+        border-left: 4px solid #fdf5aa;
+        padding: 25px;
+        margin: 30px 0;
+        border-radius: 0 8px 8px 0;
+      }
+
+      .reason-title {
+        color: #113f67;
+        font-weight: 600;
+        margin-bottom: 15px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 1.2rem;
+      }
+
+      .reason-text {
+        color: #34699a;
+        font-size: 1rem;
+        line-height: 1.6;
+      }
+
+      .refund-info {
+        background: rgba(253, 245, 170, 0.2);
+        border: 1px solid #fdf5aa;
+        padding: 25px;
+        border-radius: 8px;
+        margin: 30px 0;
+      }
+
+      .refund-title {
+        color: #113f67;
+        font-weight: 600;
+        margin-bottom: 15px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 1.2rem;
+      }
+
+      .refund-details {
+        display: grid;
+        gap: 12px;
+      }
+
+      .refund-item {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        color: #34699a;
+        font-size: 0.95rem;
+      }
+
+      .refund-icon {
+        width: 20px;
+        height: 20px;
+        background: #58a0c8;
+        color: white;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.8rem;
+        font-weight: bold;
+        margin-top: 2px;
+        flex-shrink: 0;
+      }
+
+      .cta-section {
+        text-align: center;
+        margin: 40px 0;
+        padding: 30px;
+        background: linear-gradient(
+          135deg,
+          rgba(88, 160, 200, 0.05) 0%,
+          rgba(253, 245, 170, 0.05) 100%
+        );
+        border-radius: 12px;
+        border: 1px solid rgba(88, 160, 200, 0.2);
+      }
+
+      .cta-title {
+        color: #113f67;
+        font-size: 1.4rem;
+        font-weight: 600;
+        margin-bottom: 15px;
+      }
+
+      .cta-description {
+        color: #34699a;
+        font-size: 1rem;
+        margin-bottom: 25px;
+        line-height: 1.6;
+      }
+
+      .cta-buttons {
+        display: flex;
+        gap: 15px;
+        justify-content: center;
+        flex-wrap: wrap;
+      }
+
+      .primary-button {
+        display: inline-block;
+        background: linear-gradient(135deg, #58a0c8 0%, #34699a 100%);
+        color: white;
+        padding: 16px 35px;
+        text-decoration: none;
+        border-radius: 50px;
+        font-size: 1.1rem;
+        font-weight: 600;
+        box-shadow: 0 4px 15px rgba(88, 160, 200, 0.3);
+        transition: all 0.3s ease;
+        position: relative;
+        overflow: hidden;
+      }
+
+      .secondary-button {
+        display: inline-block;
+        background: transparent;
+        border: 2px solid #58a0c8;
+        color: #58a0c8;
+        padding: 14px 35px;
+        text-decoration: none;
+        border-radius: 50px;
+        font-size: 1.1rem;
+        font-weight: 600;
+        transition: all 0.3s ease;
+      }
+
+      .primary-button::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: -100%;
+        width: 100%;
+        height: 100%;
+        background: linear-gradient(
+          90deg,
+          transparent,
+          rgba(255, 255, 255, 0.2),
+          transparent
+        );
+        transition: left 0.5s;
+      }
+
+      .primary-button:hover::before {
+        left: 100%;
+      }
+
+      .primary-button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(88, 160, 200, 0.4);
+      }
+
+      .secondary-button:hover {
+        background: #58a0c8;
+        color: white;
+        transform: translateY(-2px);
+      }
+
+      .feedback-section {
+        background: linear-gradient(
+          135deg,
+          rgba(88, 160, 200, 0.05) 0%,
+          rgba(253, 245, 170, 0.05) 100%
+        );
+        border: 1px solid rgba(88, 160, 200, 0.2);
+        padding: 25px;
+        border-radius: 12px;
+        margin: 30px 0;
+        text-align: center;
+      }
+
+      .feedback-title {
+        color: #113f67;
+        font-weight: 600;
+        margin-bottom: 15px;
+        font-size: 1.1rem;
+      }
+
+      .feedback-text {
+        color: #34699a;
+        font-size: 0.95rem;
+        margin-bottom: 20px;
+        line-height: 1.6;
+      }
+
+      .feedback-button {
+        display: inline-block;
+        background: rgba(253, 245, 170, 0.8);
+        border: 1px solid #fdf5aa;
+        color: #113f67;
+        padding: 10px 25px;
+        text-decoration: none;
+        border-radius: 25px;
+        font-size: 0.9rem;
+        font-weight: 600;
+        transition: all 0.3s ease;
+      }
+
+      .feedback-button:hover {
+        background: #fdf5aa;
+        transform: translateY(-1px);
+      }
+
+      .important-note {
+        background: linear-gradient(
+          135deg,
+          rgba(253, 245, 170, 0.15) 0%,
+          rgba(88, 160, 200, 0.05) 100%
+        );
+        border: 1px solid rgba(253, 245, 170, 0.5);
+        padding: 20px;
+        border-radius: 8px;
+        margin: 25px 0;
+      }
+
+      .note-title {
+        color: #113f67;
+        font-weight: 600;
+        margin-bottom: 10px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .note-text {
+        color: #34699a;
+        font-size: 0.9rem;
+        line-height: 1.5;
+      }
+
+      .footer {
+        background: linear-gradient(135deg, #113f67 0%, #34699a 100%);
+        padding: 30px;
+        text-align: center;
+      }
+
+      .footer-text {
+        color: #58a0c8;
+        font-size: 0.9rem;
+        margin-bottom: 15px;
+      }
+
+      .social-links {
+        display: flex;
+        justify-content: center;
+        gap: 15px;
+        margin-bottom: 20px;
+      }
+
+      .social-link {
+        width: 40px;
+        height: 40px;
+        background: rgba(253, 245, 170, 0.1);
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #fdf5aa;
+        text-decoration: none;
+        transition: all 0.3s ease;
+      }
+
+      .social-link:hover {
+        background: rgba(253, 245, 170, 0.2);
+        transform: translateY(-2px);
+      }
+
+      .copyright {
+        color: #58a0c8;
+        font-size: 0.8rem;
+        opacity: 0.8;
+      }
+
+      /* Responsive Design */
+      @media only screen and (max-width: 600px) {
+        .email-container {
+          margin: 0;
+          border-radius: 0;
+        }
+
+        .header,
+        .content,
+        .footer {
+          padding: 20px;
+        }
+
+        .logo {
+          font-size: 1.8rem;
+        }
+
+        .greeting {
+          font-size: 1.3rem;
+        }
+
+        .cancellation-message {
+          font-size: 1rem;
+        }
+
+        .cta-buttons {
+          flex-direction: column;
+          align-items: center;
+        }
+
+        .primary-button,
+        .secondary-button {
+          width: 250px;
+          text-align: center;
+        }
+
+        .detail-row {
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 5px;
+        }
+
+        .social-links {
+          gap: 10px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="email-container">
+      <!-- Header -->
+      <div class="header">
+        <div class="logo">
+          <img src="{{ business_logo_url }}" alt="CatalogQR Logo" width="200" />
+        </div>
+        <div class="status-badge">❌ Orden Cancelada</div>
+      </div>
+
+      <!-- Content -->
+      <div class="content">
+        <div class="greeting">Orden cancelada</div>
+
+        <div class="cancellation-message">
+          Lamentamos informarte que tu orden ha sido cancelada. A continuación
+          encontrarás todos los detalles.
+        </div>
+
+        <!-- Order Summary -->
+        <div class="order-summary">
+          <div class="order-title">📋 Detalles de la orden cancelada</div>
+          <div class="order-details">
+            <div class="detail-row">
+              <span class="detail-label">Número de orden:</span>
+              <span class="detail-value">#{{ transaction_id }}</span>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Fecha de orden:</span>
+              <span class="detail-value">{{ order_date }}</span>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Fecha de cancelación:</span>
+              <span class="detail-value">{{ cancellation_date }}</span>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Producto:</span>
+              <span class="detail-value">{{ product_name }}</span>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Estado:</span>
+              <span class="detail-value">CANCELADO</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Cancellation Reason -->
+        <div class="cancellation-reason">
+          <div class="reason-title">💡 Motivo de la cancelación</div>
+          <div class="reason-text">{{ cancellation_reason }}</div>
+        </div>
+
+        <!-- CTA Section -->
+        <div class="cta-section">
+          <div class="cta-title">¿Te gustaría intentar de nuevo?</div>
+          <div class="cta-description">
+            Puedes crear una nueva orden en cualquier momento.
+          </div>
+          <div class="cta-buttons">
+            <a href="{{ business_website_url }}" class="primary-button"
+              >Ir al catálogo</a
+            >
+          </div>
+        </div>
+
+        <!-- Important Note -->
+
+        <div style="margin-top: 30px; color: #34699a; text-align: center">
+          <strong>¿Tienes preguntas?</strong><br />
+          Contáctanos en:<br />
+          Email: <strong style="color: #113f67">{{ business_email }}</strong
+          ><br />
+          Teléfono: <strong style="color: #113f67">{{ business_phone }}</strong>
+        </div>
+
+        <div style="margin-top: 20px; color: #34699a; text-align: center">
+          Lamentamos cualquier inconveniente causado.<br />
+        </div>
+      </div>
+
+      <!-- Footer -->
+      <div class="footer">
+        <div class="copyright">
+          © 2025 Qatalo. Todos los derechos reservados.<br />
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
