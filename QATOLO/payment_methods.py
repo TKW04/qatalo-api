@@ -45,6 +45,7 @@ def get_payment_methods_by_user_id(user_id: str):
         for item in response.get("Items", []):
             payment_methods.append({
                 "payment_method_id": item.get("payment_method_id", ""),
+                "payment_method_name": item.get("payment_method_name", ""),
                 "user_id": item.get("user_id", ""),
                 "business_id": item.get("business_id", ""),
                 "payment_type": item.get("payment_type", ""),
@@ -77,6 +78,7 @@ def get_payment_methods_by_user_id(user_id: str):
             'headers': {'Access-Control-Allow-Origin': '*'},
             'body': json.dumps({'message': str(e)})
         }
+
 
 def get_payment_methods_by_business_id(business_id: str):
     """
@@ -90,6 +92,7 @@ def get_payment_methods_by_business_id(business_id: str):
         for item in response.get("Items", []):
             payment_methods.append({
                 "payment_method_id": item.get("payment_method_id", ""),
+                "payment_method_name": item.get("payment_method_name", ""),
                 "user_id": item.get("user_id", ""),
                 "business_id": item.get("business_id", ""),
                 "payment_type": item.get("payment_type", ""),
@@ -122,7 +125,7 @@ def get_payment_methods_by_business_id(business_id: str):
             'headers': {'Access-Control-Allow-Origin': '*'},
             'body': json.dumps({'message': str(e)})
         }
-   
+
 
 def create_payment_method(event, user_name, user_id):
     """
@@ -133,6 +136,7 @@ def create_payment_method(event, user_name, user_id):
         payment_methods_table.put_item(
             Item={
                 "payment_method_id": str(uuid.uuid4()),
+                "payment_method_name": body.get('payment_method_name', ''),
                 "business_id": body.get('business_id', ''),
                 "user_id": user_id,
                 "payment_type": body.get('payment_type', ''),
@@ -175,9 +179,10 @@ def update_payment_method(event, user_name, payment_method_id, user_id):
         body = json.loads(event.get('body', '{}'))
         payment_methods_table.update_item(
             Key={"payment_method_id": payment_method_id},
-            UpdateExpression="SET business_id = :business_id, payment_type = :payment_type, account_number = :account_number, account_type = :account_type, bank_name = :bank_name, routing_number = :routing_number, owner_name = :owner_name, owner_document = :owner_document, owner_email = :owner_email, swift = :swift, standard_account = :standard_account, payment_link = :payment_link, currency = :currency, update_date = :update_date, update_user = :update_user",
+            UpdateExpression="SET business_id = :business_id, payment_method_name = :payment_method_name, payment_type = :payment_type, account_number = :account_number, account_type = :account_type, bank_name = :bank_name, routing_number = :routing_number, owner_name = :owner_name, owner_document = :owner_document, owner_email = :owner_email, swift = :swift, standard_account = :standard_account, payment_link = :payment_link, currency = :currency, update_date = :update_date, update_user = :update_user",
             ExpressionAttributeValues={
                 ':business_id': body.get('business_id', ''),
+                ':payment_method_name': body.get('payment_method_name', ''),
                 ':payment_type': body.get('payment_type', ''),
                 ':account_number': body.get('account_number', ''),
                 ':account_type': body.get('account_type', ''),

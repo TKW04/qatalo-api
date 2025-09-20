@@ -18,6 +18,7 @@ cognito = boto3.client('cognito-idp')
 customers_table = dynamodb.Table("qatalo.customers")
 business_table = dynamodb.Table("qatalo.business")
 payment_methods_table = dynamodb.Table("qatalo.payment_methods")
+products_table = dynamodb.Table("qatalo.products")
 USER_POOL_ID = os.environ.get('USER_POOL_ID')
 
 s3 = boto3.client('s3')
@@ -220,7 +221,7 @@ def create_customer(event):
                     "order_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     "product_name": transaction.get('product_name', ''),
                     "quantity": transaction.get('quantity', 1),
-                    "total_amount": str(transaction.get("price", 0.00) * transaction.get("quantity", 1)),
+                    "total_amount": str((Decimal(transaction.get("price", 0.00)) * int(transaction.get("quantity", 1)))),
                     "currency": transaction.get('payment_method', {}).get('currency', ''),
                     "upload_link": payment_link,
                     "business_email": user_attrs.get("email", "Qatalo"),
@@ -303,7 +304,7 @@ def create_customer_transaction(body):
         "order_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "product_name": transaction.get('product_name', ''),
         "quantity": transaction.get('quantity', 1),
-        "total_amount": str(transaction.get("price", 0.00) * transaction.get("quantity", 1)),
+        "total_amount": str((Decimal(transaction.get("price", 0.00)) * int(transaction.get("quantity", 1)))),
         "currency": transaction.get('payment_method', {}).get('currency', ''),
         "upload_link": payment_link,
         "business_email": user_attrs.get("email", "Qatalo"),
@@ -459,7 +460,7 @@ def upload_receipt(event):
                                 "order_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                                 "product_name": transaction.get('product_name', ''),
                                 "quantity": transaction.get('quantity', 1),
-                                "total_amount": str(transaction.get("price", 0.00) * transaction.get("quantity", 1)),
+                                "total_amount": str((Decimal(transaction.get("price", 0.00)) * int(transaction.get("quantity", 1)))),
                                 "currency": transaction.get('payment_method', {}).get('currency', ''),
                                 "business_website_url": business_website_url,
                                 "business_email": user_attrs.get("email", "Qatalo"),
@@ -602,6 +603,26 @@ def approve_transaction(event):
                 user_attrs = {attr['Name']: attr['Value']
                               for attr in user['UserAttributes']}
 
+                product_response = products_table.get_item(
+                    Key={"product_id": transaction.get("product_id", "")})
+                product = product_response["Item"]
+                quantity = int(product.get("quantity", 0)) - \
+                    int(transaction.get("quantity", 1))
+                if quantity < 0:
+                    quantity = 0
+
+                product["quantity"] = quantity
+                products_table.update_item(
+                    Key={"product_id": product.get("product_id", "")},
+                    UpdateExpression="SET quantity = :quantity, update_date = :update_date, update_user = :update_user",
+                    ExpressionAttributeValues={
+                        ':quantity': product.get("quantity", 0),
+                        ':update_date': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        ':update_user': user_attrs.get("email", "")
+                    },
+                    ReturnValues="UPDATED_NEW"
+                )
+
                 business_website_url = f"{FRONT_END_URL}/catalog/{business.get('business_slug', '')}"
 
                 order_details = {
@@ -611,15 +632,15 @@ def approve_transaction(event):
                     "order_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     "product_name": transaction.get('product_name', ''),
                     "quantity": transaction.get('quantity', 1),
-                    "total_amount": str(transaction.get("price", 0.00) * transaction.get("quantity", 1)),
+                    "total_amount": str((Decimal(transaction.get("price", 0.00)) * int(transaction.get("quantity", 1)))),
                     "currency": transaction.get('payment_method', {}).get('currency', ''),
                     "business_website_url": business_website_url,
                     "business_email": user_attrs.get("email", "Qatalo"),
                     "business_phone": business.get("business_phone", "Qatalo")
                 }
                 return order_verified_email(customer.get('email'),
-                                           to_name=f"{customer.get('given_name')} {customer.get('family_name')}",
-                                           order_details=order_details)
+                                            to_name=f"{customer.get('given_name')} {customer.get('family_name')}",
+                                            order_details=order_details)
             else:
                 return {
                     'statusCode': 404,
