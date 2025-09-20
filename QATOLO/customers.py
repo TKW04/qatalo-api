@@ -2,7 +2,7 @@ import base64
 import io
 import re
 import traceback
-from SendMails.mails import cancel_order_email, create_order_email
+from SendMails.mails import order_cancel_email, order_create_email, order_receipt_email, order_verified_email
 import boto3
 import json
 import os
@@ -30,6 +30,12 @@ def customers_routes(path, method, event, user_name, user_id):
         return get_customers_by_user_id(user_id=user_id)
     if path == "/customers" and method == 'POST':
         return create_customer(event=event)
+    if path == "/customers/transactions" and method == 'POST':
+        return upload_receipt(event=event)
+    if path == "/customers/transactions/approve" and method == 'POST':
+        return approve_transaction(event=event)
+    if path == "/customers/transactions/cancelAdmin" and method == 'POST':
+        return cancel_transaction(event=event)
     if path == "/customers/transactions/cancel" and method == 'POST':
         return cancel_transaction(event=event)
 
@@ -220,7 +226,7 @@ def create_customer(event):
                     "business_email": user_attrs.get("email", "Qatalo"),
                     "business_phone": business.get("business_phone", "Qatalo")
                 }
-                return create_order_email(body.get('email'),
+                return order_create_email(body.get('email'),
                                           to_name=f"{body.get('given_name')} {body.get('family_name')}",
                                           order_details=order_details)
             else:
@@ -303,7 +309,7 @@ def create_customer_transaction(body):
         "business_email": user_attrs.get("email", "Qatalo"),
         "business_phone": business.get("business_phone", "Qatalo")
     }
-    return create_order_email(body.get('email'),
+    return order_create_email(body.get('email'),
                               to_name=f"{body.get('given_name')} {body.get('family_name')}",
                               order_details=order_details)
 
@@ -397,8 +403,9 @@ def upload_receipt(event):
                 customer_update[name] = part.text
 
             if file_infos:
+                transaction_id = customer_update.get("transaction_id", "")
                 images = upload_image(file_info=file_infos[0], customer_id=customer_update.get(
-                    "customer_id", ""), transaction_id=customer_update.get("transaction_id", ""))
+                    "customer_id", ""), transaction_id=transaction_id)
                 if images:
                     response = customers_table.get_item(
                         Key={"customer_id": customer_update.get("customer_id", "")})
@@ -415,7 +422,7 @@ def upload_receipt(event):
                             "transactions": item.get("transactions", [])
                         }
                         transaction = next((tran for tran in customer.get("transactions", []) if tran.get(
-                            "transaction_id", "") == customer_update.get("transaction_id", "")), None)
+                            "transaction_id", "") == transaction_id), None)
                         if transaction:
                             transaction["receipt_url"] = images
                             transaction["status"] = "Pendiente de validación"
@@ -430,11 +437,37 @@ def upload_receipt(event):
                                 },
                                 ReturnValues="UPDATED_NEW"
                             )
-                            return {
-                                'statusCode': 200,
-                                'headers': {'Access-Control-Allow-Origin': '*'},
-                                'body': json.dumps({'message': 'Recibo subido y transacción actualizada correctamente', "receipt_url": images})
+                            business_response = business_table.get_item(
+                                Key={"business_id": customer.get("business_id", "")})
+                            business = business_response["Item"]
+
+                            user = cognito.admin_get_user(
+                                UserPoolId=USER_POOL_ID,
+                                Username=business.get("user_id", "")
+                            )
+
+                            # Formatear los atributos
+                            user_attrs = {attr['Name']: attr['Value']
+                                          for attr in user['UserAttributes']}
+
+                            business_website_url = f"{FRONT_END_URL}/catalog/{business.get('business_slug', '')}"
+
+                            order_details = {
+                                "business_name": business.get("business_name", "Qatalo"),
+                                "business_logo_url": business.get("business_logo_url", ""),
+                                "transaction_id": transaction_id,
+                                "order_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                "product_name": transaction.get('product_name', ''),
+                                "quantity": transaction.get('quantity', 1),
+                                "total_amount": str(transaction.get("price", 0.00) * transaction.get("quantity", 1)),
+                                "currency": transaction.get('payment_method', {}).get('currency', ''),
+                                "business_website_url": business_website_url,
+                                "business_email": user_attrs.get("email", "Qatalo"),
+                                "business_phone": business.get("business_phone", "Qatalo")
                             }
+                            return order_receipt_email(customer.get('email'),
+                                                       to_name=f"{customer.get('given_name')} {customer.get('family_name')}",
+                                                       order_details=order_details)
 
     except Exception as e:
         print(json.dumps({"event": "upload_receipt",
@@ -499,7 +532,7 @@ def cancel_transaction(event):
                     "business_email": user_attrs.get("email", ""),
                     "business_phone":  business.get("business_phone", "")
                 }
-                return cancel_order_email(customer.get('email'),
+                return order_cancel_email(customer.get('email'),
                                           to_name=f"{customer.get('given_name')} {customer.get('family_name')}",
                                           order_details=order_details)
             else:
@@ -556,11 +589,37 @@ def approve_transaction(event):
                     },
                     ReturnValues="UPDATED_NEW"
                 )
-                return {
-                    'statusCode': 200,
-                    'headers': {'Access-Control-Allow-Origin': '*'},
-                    'body': json.dumps({'message': 'Transacción aprobada correctamente'})
+                business_response = business_table.get_item(
+                    Key={"business_id": customer.get("business_id", "")})
+                business = business_response["Item"]
+
+                user = cognito.admin_get_user(
+                    UserPoolId=USER_POOL_ID,
+                    Username=business.get("user_id", "")
+                )
+
+                # Formatear los atributos
+                user_attrs = {attr['Name']: attr['Value']
+                              for attr in user['UserAttributes']}
+
+                business_website_url = f"{FRONT_END_URL}/catalog/{business.get('business_slug', '')}"
+
+                order_details = {
+                    "business_name": business.get("business_name", "Qatalo"),
+                    "business_logo_url": business.get("business_logo_url", ""),
+                    "transaction_id": transaction_id,
+                    "order_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "product_name": transaction.get('product_name', ''),
+                    "quantity": transaction.get('quantity', 1),
+                    "total_amount": str(transaction.get("price", 0.00) * transaction.get("quantity", 1)),
+                    "currency": transaction.get('payment_method', {}).get('currency', ''),
+                    "business_website_url": business_website_url,
+                    "business_email": user_attrs.get("email", "Qatalo"),
+                    "business_phone": business.get("business_phone", "Qatalo")
                 }
+                return order_verified_email(customer.get('email'),
+                                           to_name=f"{customer.get('given_name')} {customer.get('family_name')}",
+                                           order_details=order_details)
             else:
                 return {
                     'statusCode': 404,
