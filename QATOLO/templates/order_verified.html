@@ -447,23 +447,20 @@
       <!-- Header -->
       <div class="header">
         <div class="logo">
-          <img
-            src="{{ business_logo_url }}"
-            alt="CatalogQR Logo"
-            width="200"
-          />
+          <img src="{{ business_logo_url }}" alt="CatalogQR Logo" width="200" />
         </div>
-        <div class="status-badge">✅ Orden Recibida</div>
+        <div class="status-badge">✅ Comprobante de pago recibido</div>
       </div>
 
       <!-- Content -->
       <div class="content">
-        <div class="greeting">¡Gracias por tu orden!</div>
+        <div class="greeting">¡Gracias por enviar tu comprobante de pago!</div>
 
         <div class="confirmation-message">
-          Hemos recibido exitosamente tu orden y está siendo procesada. Para
-          continuar con el proceso, necesitamos que subas tu comprobante de
-          pago.
+          Hemos recibido exitosamente tu comprobante de pago y está siendo
+          procesado. Estaremos verificando los detalles y te notificaremos una
+          vez que tu pago haya sido confirmado. Mientras tanto, puedes revisar
+          el resumen de tu orden a continuación.
         </div>
 
         <!-- Order Summary -->
@@ -497,14 +494,11 @@
 
         <!-- CTA Section -->
         <div class="cta-section">
-          <div class="cta-title">📤 Sube tu comprobante de pago</div>
+          <div class="cta-title">Seguir comprando</div>
           <div class="cta-description">
-            Haz clic en el botón de abajo y sube una imagen clara de tu
-            comprobante de pago.
+            Haz clic en el botón de abajo y visita nuestra tienda.
           </div>
-          <a href="{{ upload_link }}" class="upload-button"
-            >Subir comprobante</a
-          >
+          <a href="{{ business_website_url }}" class="upload-button">Visitar tienda</a>
         </div>
 
         <!-- Status Timeline -->
@@ -519,38 +513,28 @@
           </div>
 
           <div class="timeline-item">
-            <div class="timeline-status pending">2</div>
-            <div class="timeline-text">Esperando comprobante de pago</div>
+            <div class="timeline-status completed">✓</div>
+            <div class="timeline-text completed">Esperando comprobante de pago</div>
           </div>
 
           <div class="timeline-item">
-            <div class="timeline-status upcoming">3</div>
-            <div class="timeline-text upcoming">Verificación de pago</div>
+            <div class="timeline-status completed">✓</div>
+            <div class="timeline-text completed">Verificación de pago</div>
           </div>
 
           <div class="timeline-item">
-            <div class="timeline-status upcoming">4</div>
-            <div class="timeline-text upcoming">Completado</div>
+            <div class="timeline-status pending">4</div>
+            <div class="timeline-text pending">Completado</div>
           </div>
         </div>
+        
 
         <!-- Important Note -->
-        <div class="important-note">
-          <div class="note-title">⚠️ Información importante</div>
-          <div class="note-text">
-            • El comprobante debe mostrar claramente el monto, fecha y método de
-            pago<br />
-            • Formatos aceptados: JPG, PNG (máximo 5MB)<br />
-            • Verificaremos tu pago en un máximo de 24 horas<br />
-            • Recibirás un email de confirmación una vez tu pago haya sido
-            verificado
-          </div>
-        </div>
-
         <div style="margin-top: 30px; color: #34699a; text-align: center">
           <strong>¿Tienes preguntas?</strong><br />
           Contáctanos en:<br />
-          Email: <strong style="color: #113f67">{{ business_email }}</strong><br/>
+          Email: <strong style="color: #113f67">{{ business_email }}</strong
+          ><br />
           Teléfono: <strong style="color: #113f67">{{ business_phone }}</strong>
         </div>
       </div>
