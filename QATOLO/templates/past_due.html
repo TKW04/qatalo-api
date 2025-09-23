@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pago Vencido - Qatalo</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        background-color: #f8f9fa;
+        line-height: 1.6;
+        color: #333;
+      }
+
+      .email-container {
+        max-width: 600px;
+        margin: 0 auto;
+        background-color: #ffffff;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+        border-radius: 10px;
+        overflow: hidden;
+      }
+
+      .header {
+        background: linear-gradient(135deg, #113f67 0%, #34699a 100%);
+        padding: 40px 30px;
+        text-align: center;
+        position: relative;
+        overflow: hidden;
+      }
+
+      .header::before {
+        content: "";
+        position: absolute;
+        top: -50%;
+        left: -50%;
+        width: 200%;
+        height: 200%;
+        background: radial-gradient(
+          circle,
+          rgba(253, 245, 170, 0.1) 0%,
+          transparent 70%
+        );
+        animation: rotate 20s linear infinite;
+      }
+
+      @keyframes rotate {
+        0% {
+          transform: rotate(0deg);
+        }
+        100% {
+          transform: rotate(360deg);
+        }
+      }
+
+      .logo {
+        color: #fdf5aa;
+        font-size: 2.2rem;
+        font-weight: bold;
+        letter-spacing: 2px;
+        position: relative;
+        z-index: 2;
+        margin-bottom: 15px;
+      }
+
+      .status-badge {
+        background: rgba(220, 53, 69, 0.2);
+        border: 2px solid rgba(220, 53, 69, 0.7);
+        color: #fdf5aa;
+        padding: 10px 25px;
+        border-radius: 25px;
+        font-size: 1rem;
+        font-weight: 600;
+        position: relative;
+        z-index: 2;
+        display: inline-block;
+        margin-top: 10px;
+        animation: pulse-warning 2s infinite;
+      }
+
+      @keyframes pulse-warning {
+        0%,
+        100% {
+          transform: scale(1);
+          opacity: 1;
+        }
+        50% {
+          transform: scale(1.05);
+          opacity: 0.9;
+        }
+      }
+
+      .content {
+        padding: 40px 30px;
+      }
+
+      .urgent-notice {
+        background: linear-gradient(
+          135deg,
+          rgba(220, 53, 69, 0.1) 0%,
+          rgba(255, 193, 7, 0.1) 100%
+        );
+        border: 2px solid rgba(220, 53, 69, 0.3);
+        border-radius: 12px;
+        padding: 25px;
+        margin: 0 0 30px 0;
+        text-align: center;
+      }
+
+      .urgent-title {
+        color: #dc3545;
+        font-size: 1.4rem;
+        font-weight: 700;
+        margin-bottom: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+      }
+
+      .urgent-text {
+        color: #113f67;
+        font-size: 1rem;
+        font-weight: 600;
+      }
+
+      .greeting {
+        font-size: 1.5rem;
+        color: #113f67;
+        margin-bottom: 20px;
+        font-weight: 600;
+      }
+
+      .overdue-message {
+        color: #34699a;
+        font-size: 1.1rem;
+        margin-bottom: 30px;
+        line-height: 1.7;
+      }
+
+      .payment-summary {
+        background: linear-gradient(
+          135deg,
+          rgba(220, 53, 69, 0.05) 0%,
+          rgba(253, 245, 170, 0.1) 100%
+        );
+        border: 1px solid rgba(220, 53, 69, 0.2);
+        border-radius: 12px;
+        padding: 25px;
+        margin: 30px 0;
+      }
+
+      .payment-title {
+        color: #113f67;
+        font-size: 1.3rem;
+        font-weight: 600;
+        margin-bottom: 20px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .payment-details {
+        display: grid;
+        gap: 15px;
+      }
+
+      .detail-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 10px 0;
+        border-bottom: 1px dashed rgba(220, 53, 69, 0.2);
+      }
+
+      .detail-row.overdue {
+        border-bottom: none;
+        font-weight: 700;
+        font-size: 1.2rem;
+        color: #dc3545;
+        margin-top: 10px;
+        padding-top: 15px;
+        border-top: 2px solid rgba(220, 53, 69, 0.3);
+        background: rgba(220, 53, 69, 0.05);
+        padding: 15px 10px;
+        border-radius: 6px;
+      }
+
+      .detail-label {
+        color: #34699a;
+        font-weight: 500;
+      }
+
+      .detail-value {
+        color: #113f67;
+        font-weight: 600;
+      }
+
+      .suspension-notice {
+        background: linear-gradient(
+          135deg,
+          rgba(253, 245, 170, 0.2) 0%,
+          rgba(220, 53, 69, 0.1) 100%
+        );
+        border-left: 4px solid #dc3545;
+        padding: 25px;
+        margin: 30px 0;
+        border-radius: 0 8px 8px 0;
+      }
+
+      .suspension-title {
+        color: #dc3545;
+        font-weight: 700;
+        margin-bottom: 15px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 1.2rem;
+      }
+
+      .suspension-text {
+        color: #113f67;
+        font-size: 1rem;
+        line-height: 1.6;
+        margin-bottom: 15px;
+      }
+
+      .suspension-list {
+        list-style: none;
+        padding: 0;
+        margin-top: 15px;
+      }
+
+      .suspension-item {
+        color: #34699a;
+        margin-bottom: 8px;
+        padding-left: 25px;
+        position: relative;
+      }
+
+      .suspension-item::before {
+        content: "⚠️";
+        position: absolute;
+        left: 0;
+        top: 0;
+      }
+
+      .cta-section {
+        text-align: center;
+        margin: 40px 0;
+        padding: 30px;
+        background: linear-gradient(
+          135deg,
+          rgba(88, 160, 200, 0.1) 0%,
+          rgba(253, 245, 170, 0.1) 100%
+        );
+        border-radius: 12px;
+        border: 2px solid #58a0c8;
+      }
+
+      .cta-title {
+        color: #113f67;
+        font-size: 1.5rem;
+        font-weight: 700;
+        margin-bottom: 15px;
+      }
+
+      .cta-description {
+        color: #34699a;
+        font-size: 1.1rem;
+        margin-bottom: 25px;
+        line-height: 1.6;
+      }
+
+      .cta-buttons {
+        display: flex;
+        gap: 15px;
+        justify-content: center;
+        flex-wrap: wrap;
+      }
+
+      .pay-now-button {
+        display: inline-block;
+        background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
+        color: white;
+        padding: 18px 40px;
+        text-decoration: none;
+        border-radius: 50px;
+        font-size: 1.2rem;
+        font-weight: 700;
+        box-shadow: 0 4px 15px rgba(220, 53, 69, 0.3);
+        transition: all 0.3s ease;
+        position: relative;
+        overflow: hidden;
+        animation: pulse-cta 3s infinite;
+      }
+
+      @keyframes pulse-cta {
+        0%,
+        100% {
+          box-shadow: 0 4px 15px rgba(220, 53, 69, 0.3);
+        }
+        50% {
+          box-shadow: 0 6px 25px rgba(220, 53, 69, 0.5);
+        }
+      }
+
+      .pay-now-button::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: -100%;
+        width: 100%;
+        height: 100%;
+        background: linear-gradient(
+          90deg,
+          transparent,
+          rgba(255, 255, 255, 0.2),
+          transparent
+        );
+        transition: left 0.5s;
+      }
+
+      .pay-now-button:hover::before {
+        left: 100%;
+      }
+
+      .pay-now-button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(220, 53, 69, 0.4);
+      }
+
+      .contact-button {
+        display: inline-block;
+        background: transparent;
+        border: 2px solid #58a0c8;
+        color: #58a0c8;
+        padding: 16px 35px;
+        text-decoration: none;
+        border-radius: 50px;
+        font-size: 1.1rem;
+        font-weight: 600;
+        transition: all 0.3s ease;
+      }
+
+      .contact-button:hover {
+        background: #58a0c8;
+        color: white;
+        transform: translateY(-2px);
+      }
+
+      .grace-period {
+        background: rgba(253, 245, 170, 0.3);
+        border: 1px solid #fdf5aa;
+        padding: 20px;
+        border-radius: 8px;
+        margin: 30px 0;
+        text-align: center;
+      }
+
+      .grace-title {
+        color: #113f67;
+        font-weight: 600;
+        margin-bottom: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        font-size: 1.1rem;
+      }
+
+      .grace-text {
+        color: #34699a;
+        font-size: 0.95rem;
+        line-height: 1.5;
+      }
+
+      .countdown-timer {
+        background: linear-gradient(
+          135deg,
+          #fdf5aa 0%,
+          rgba(253, 245, 170, 0.8) 100%
+        );
+        border: 2px solid #e6c200;
+        padding: 20px;
+        border-radius: 12px;
+        margin: 25px 0;
+        text-align: center;
+      }
+
+      .countdown-title {
+        color: #113f67;
+        font-weight: 700;
+        margin-bottom: 10px;
+        font-size: 1.1rem;
+      }
+
+      .countdown-text {
+        color: #113f67;
+        font-size: 1.5rem;
+        font-weight: 700;
+      }
+
+      .payment-methods {
+        background: linear-gradient(
+          135deg,
+          rgba(88, 160, 200, 0.05) 0%,
+          rgba(253, 245, 170, 0.05) 100%
+        );
+        border: 1px solid rgba(88, 160, 200, 0.2);
+        padding: 20px;
+        border-radius: 8px;
+        margin: 30px 0;
+      }
+
+      .methods-title {
+        color: #113f67;
+        font-weight: 600;
+        margin-bottom: 15px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 1.1rem;
+      }
+
+      .method-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        color: #34699a;
+        font-size: 0.9rem;
+        margin-bottom: 8px;
+      }
+
+      .method-item strong {
+        color: #113f67;
+      }
+
+      .footer {
+        background: linear-gradient(135deg, #113f67 0%, #34699a 100%);
+        padding: 30px;
+        text-align: center;
+      }
+
+      .footer-urgent {
+        color: #fdf5aa;
+        font-size: 1.1rem;
+        font-weight: 600;
+        margin-bottom: 15px;
+      }
+
+      .footer-text {
+        color: #58a0c8;
+        font-size: 0.9rem;
+        margin-bottom: 15px;
+      }
+
+      .social-links {
+        display: flex;
+        justify-content: center;
+        gap: 15px;
+        margin-bottom: 20px;
+      }
+
+      .social-link {
+        width: 40px;
+        height: 40px;
+        background: rgba(253, 245, 170, 0.1);
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #fdf5aa;
+        text-decoration: none;
+        transition: all 0.3s ease;
+      }
+
+      .social-link:hover {
+        background: rgba(253, 245, 170, 0.2);
+        transform: translateY(-2px);
+      }
+
+      .copyright {
+        color: #58a0c8;
+        font-size: 0.8rem;
+        opacity: 0.8;
+      }
+
+      /* Responsive Design */
+      @media only screen and (max-width: 600px) {
+        .email-container {
+          margin: 0;
+          border-radius: 0;
+        }
+
+        .header,
+        .content,
+        .footer {
+          padding: 20px;
+        }
+
+        .logo {
+          font-size: 1.8rem;
+        }
+
+        .greeting {
+          font-size: 1.3rem;
+        }
+
+        .overdue-message {
+          font-size: 1rem;
+        }
+
+        .cta-buttons {
+          flex-direction: column;
+          align-items: center;
+        }
+
+        .pay-now-button,
+        .contact-button {
+          width: 250px;
+          text-align: center;
+        }
+
+        .detail-row {
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 5px;
+        }
+
+        .method-item {
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 3px;
+        }
+
+        .social-links {
+          gap: 10px;
+        }
+
+        .countdown-text {
+          font-size: 1.3rem;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="email-container">
+      <!-- Header -->
+      <div class="header">
+        <div class="logo">
+          <img
+            src="https://qatalo.s3.us-east-1.amazonaws.com/qatalo.png"
+            alt="CatalogQR Logo"
+            width="200"
+          />
+        </div>
+        <div class="status-badge">⚠️ Pago Vencido</div>
+      </div>
+
+      <!-- Content -->
+      <div class="content">
+        <!-- Urgent Notice -->
+        <div class="urgent-notice">
+          <div class="urgent-title">🚨 ACCIÓN REQUERIDA INMEDIATAMENTE</div>
+          <div class="urgent-text">
+            Tu acceso a Qatalo ha sido suspendido temporalmente
+          </div>
+        </div>
+
+        <div class="greeting">Estimado usuario {{ user_name }},</div>
+
+        <div class="overdue-message">
+          Tu fecha de pago ha vencido y lamentablemente hemos tenido que
+          suspender temporalmente el acceso a tu catálogo en Qatalo.
+          Realiza tu pago ahora para restaurar inmediatamente todos tus
+          servicios.
+        </div>
+
+        <!-- Suspension Notice -->
+        <div class="suspension-notice">
+          <div class="suspension-title">🔒 Tu cuenta ha sido suspendida</div>
+          <div class="suspension-text">
+            Debido al pago vencido, los siguientes servicios están temporalmente
+            inactivos:
+          </div>
+          <ul class="suspension-list">
+            <li class="suspension-item">Acceso a tu catálogo</li>
+            <li class="suspension-item">Acceso a funciones administrativas</li>
+            <li class="suspension-item">
+              Tu catálogo de productos no está disponible
+            </li>
+          </ul>
+        </div>
+
+        <!-- CTA Section -->
+        <div class="cta-section">
+          <div class="cta-title">Restaura tu acceso AHORA</div>
+          <div class="cta-description">
+            Realiza tu pago inmediatamente para reactivar todos los servicios.
+            Tu acceso se restaurará automáticamente en minutos.
+          </div>
+          <div class="cta-buttons">
+            <a href="{{ admin_url }}" class="pay-now-button">💳 Pagar Ahora</a>
+          </div>
+        </div>
+
+        
+
+      <!-- Footer -->
+      <div class="footer">
+        
+
+
+        <div class="copyright">
+          © 2025 Qatalo. Todos los derechos reservados.<br />
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

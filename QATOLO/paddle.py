@@ -5,14 +5,17 @@ import re
 import requests
 import boto3
 from types import SimpleNamespace
+from SendMails.mails import past_due_email
 from paddle_billing.Notifications import Secret, Verifier
 
 PADDLE_API_KEY = os.environ['PADDLE_API_KEY']            # sandbox API key
 PADDLE_API_BASE = os.environ.get(
     'PADDLE_API_BASE', 'https://sandbox-api.paddle.com')
 PADDLE_WEBHOOK_SECRET = os.environ['PADDLE_WEBHOOK_SECRET']
+
 cognito = boto3.client('cognito-idp')
 USER_POOL_ID = os.environ.get('USER_POOL_ID')
+FRONT_END_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
 
 HEADERS = {
     "Authorization": f"Bearer {PADDLE_API_KEY}",
@@ -122,7 +125,10 @@ def verify_paddle_signature(event):
         canceled_event(data, status)
     if status == "trialing":
         trialing_event(data, status)
-
+    if status == "past_due":
+        past_due_event(data, status)
+    if status == "paid":
+        paid_event(data, "activated")
     return {"statusCode": 200, "body": json.dumps({"ok": True})}
 
 
@@ -149,6 +155,39 @@ def activated_event(payload, status):
     customer_id = payload.get("customer_id")
     user_id = payload.get("custom_data", {}).get("appUserId")
     due_date = payload.get("billing_period").get("ends_at")
+    update_user(user_id=user_id, transaction_id=transaction_id,
+                transaction_status=status, customer_id=customer_id, due_date=due_date)
+
+
+def past_due_event(payload, status):
+    transaction_id = payload.get("id")
+    customer_id = payload.get("customer_id")
+    user_id = payload.get("custom_data", {}).get("appUserId")
+    update_user(user_id=user_id, transaction_id=transaction_id,
+                transaction_status=status, customer_id=customer_id, due_date=None)
+
+    user = cognito.admin_get_user(
+        UserPoolId=USER_POOL_ID,
+        Username=user_id
+    )
+
+    # Formatear los atributos
+    attrs = {attr['Name']: attr['Value']
+             for attr in user['UserAttributes']}
+    admin_url = f"{FRONT_END_URL}/login"
+
+    return past_due_email(to_address=attrs.get('email'),
+                          to_name=f"{attrs.get('given_name')} {attrs.get('family_name')}",
+                          admin_url=admin_url)
+
+
+def paid_event(payload, status):
+    transaction_id = payload.get("id")
+    customer_id = payload.get("customer_id")
+    user_id = payload.get("custom_data", {}).get("appUserId")
+    billing_period = payload.get("billing_period", {})
+    due_date = billing_period.get("ends_at") if billing_period else None
+
     update_user(user_id=user_id, transaction_id=transaction_id,
                 transaction_status=status, customer_id=customer_id, due_date=due_date)
 
