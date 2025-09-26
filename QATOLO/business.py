@@ -259,6 +259,9 @@ def update_business(event, user_name, business_id, user_id):
                 if file_info['field_name'] == 'logo':
                     business_update['logo_url'] = upload_image(
                         file_info=file_info, user_id=user_id, type_file="logo")
+                    
+        if 'logo_url' in business_update and business_update['logo_url'] is None:
+            delete_image(file_url=response['logo_url'])
 
         business_table.update_item(
             Key={'business_id': business_id},
@@ -311,3 +314,17 @@ def upload_image(file_info, user_id=None, type_file="logo"):
             "trace": traceback.format_exc()
         }))
         return None
+    
+
+def delete_image(file_url):
+    try:
+        file_name = file_url.split('https://qatalo.s3.us-east-1.amazonaws.com/')[1]
+        s3.delete_object(Bucket=os.getenv('BUCKET_NAME'), Key=file_name)
+        return True
+    except Exception as e:
+        print(json.dumps({
+            "event": "delete_image",
+            "error": str(e),
+            "trace": traceback.format_exc()
+        }))
+        return False
