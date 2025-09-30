@@ -68,6 +68,9 @@ def get_products_by_user_id(user_id: str):
                 "price": item.get("price", 0.0),
                 "quantity": item.get("quantity", 0),
                 "orden": item.get("orden", 0),
+                "just_one": item.get("just_one", False),
+                "show_quantity": item.get("show_quantity", False),
+                "terms": item.get("terms", ""),
                 "currency": item.get("currency", ""),
                 "imagesUrl": images,
                 "category_id": item.get("category_id", ""),
@@ -117,6 +120,9 @@ def get_products_by_business_id(business_id: str):
                 "price": item.get("price", 0.00),
                 "quantity": item.get("quantity", 0),
                 "orden": item.get("orden", 0),
+                "just_one": item.get("just_one", False),
+                "terms": item.get("terms", ""),
+                "show_quantity": item.get("show_quantity", False),
                 "currency": item.get("currency", ""),
                 "imagesUrl": images,
                 "category_id": item.get("category_id", ""),
@@ -195,6 +201,9 @@ def create_product(event, user_name, user_id):
                 "price": Decimal(product_create.get("price", 0.00)),
                 "quantity": product_create.get("quantity", 0),
                 "orden": product_create.get("orden", 0),
+                "just_one": product_create.get("just_one", False),
+                "terms": product_create.get("terms", ""),
+                "show_quantity": product_create.get("show_quantity", False),
                 "currency": product_create.get("currency", ""),
                 "imagesUrl": product_create.get("imagesUrl", []),
                 "category_id": product_create.get("category_id", ""),
@@ -257,13 +266,13 @@ def update_product(event, user_name, product_id, user_id):
                 product_update[name] = part.text
 
         response = products_table.get_item(Key={"product_id": product_id})
-        imagesUrl=[]
+        imagesUrl = []
         if "Item" in response:
             imagesUrl = response["Item"].get("imagesUrl", [])
         images = []
         for image in imagesUrl:
             images.append(image)
-            
+
         if file_infos:
             for file_info in file_infos:
                 images.append(upload_image(
@@ -271,13 +280,16 @@ def update_product(event, user_name, product_id, user_id):
 
         products_table.update_item(
             Key={"product_id": product_id},
-            UpdateExpression="SET product_name = :product_name, description = :description, price = :price, quantity = :quantity, orden = :orden, currency = :currency, imagesUrl = :imagesUrl, category_id = :category_id, is_available = :is_available, user_id = :user_id, update_date = :update_date, update_user = :update_user",
+            UpdateExpression="SET product_name = :product_name, description = :description, price = :price, quantity = :quantity, orden = :orden, just_one = :just_one, show_quantity = :show_quantity, terms = :terms, currency = :currency, imagesUrl = :imagesUrl, category_id = :category_id, is_available = :is_available, user_id = :user_id, update_date = :update_date, update_user = :update_user",
             ExpressionAttributeValues={
                 ':description': product_update.get('description', ''),
                 ':product_name': product_update.get('name', ''),
                 ':price': product_update.get('price', 0.0),
                 ':quantity': product_update.get('quantity', 0),
                 ':orden': product_update.get('orden', 0),
+                ':just_one': product_update.get('just_one', False),
+                ':show_quantity': product_update.get('show_quantity', False),
+                ':terms': product_update.get('terms', ''),
                 ':currency': product_update.get('currency', ''),
                 ':imagesUrl': images,
                 ':category_id': product_update.get('category_id', ''),
@@ -369,7 +381,8 @@ def delete_product(product_id: str):
 
 def delete_image(file_url):
     try:
-        file_name = file_url.split('https://qatalo.s3.us-east-1.amazonaws.com/')[1]
+        file_name = file_url.split(
+            'https://qatalo.s3.us-east-1.amazonaws.com/')[1]
         print(file_name)
         s3.delete_object(Bucket=os.getenv('BUCKET_NAME'), Key=file_name)
         return True
