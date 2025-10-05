@@ -79,7 +79,8 @@ def get_customers_by_user_id(user_id: str):
                     "family_name": item.get("family_name", ""),
                     "transactions": item.get("transactions", []),
                     "email": item.get("email", ""),
-                    "phone": item.get("phone", "")
+                    "phone": item.get("phone", ""),
+                    "age": int(item.get("age", 0))
                 })
         return {
             'statusCode': 200,  # No uses 204
@@ -118,6 +119,7 @@ def get_customer_transaction(customer_id: str):
                 "family_name": item.get("family_name", ""),
                 "email": item.get("email", ""),
                 "phone": item.get("phone", ""),
+                "age": int(item.get("age", 0)),
                 "transactions": item.get("transactions", []),
 
             }
@@ -189,12 +191,13 @@ def create_customer(event):
                 })
                 customers_table.update_item(
                     Key={"customer_id": customer_id},
-                    UpdateExpression="SET given_name = :given_name, family_name = :family_name, email = :email, phone = :phone,  transactions = :transactions, update_date = :update_date, update_user = :update_user",
+                    UpdateExpression="SET given_name = :given_name, family_name = :family_name, email = :email, phone = :phone, age = :age, transactions = :transactions, update_date = :update_date, update_user = :update_user",
                     ExpressionAttributeValues={
                         ':given_name': body.get('given_name', ''),
                         ':family_name': body.get('family_name', ''),
                         ':email': body.get('email', ''),
                         ':phone': body.get('phone', ''),
+                        ':age': int(body.get('age', 0)),
                         ':transactions': transactions,
                         ':update_date': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         ':update_user': body.get('email', '')
@@ -276,6 +279,7 @@ def create_customer_transaction(body):
             "family_name": body.get('family_name', ''),
             "email": body.get('email', ''),
             "phone": body.get('phone', ''),
+            "age": int(body.get('age', 0)),
             "transactions": transactions,
             "create_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "create_user": body.get('email', ''),
@@ -326,12 +330,13 @@ def update_customer(event, user_name, customer_id, user_id):
         body = json.loads(event.get('body', '{}'))
         customers_table.update_item(
             Key={"customer_id": customer_id},
-            UpdateExpression="SET given_name = :given_name, family_name = :family_name, email = :email, phone = :phone, user_id = :user_id, update_date = :update_date, update_user = :update_user",
+            UpdateExpression="SET given_name = :given_name, family_name = :family_name, email = :email, phone = :phone, age = :age, user_id = :user_id, update_date = :update_date, update_user = :update_user",
             ExpressionAttributeValues={
                 ':given_name': body.get('given_name', ''),
                 ':family_name': body.get('family_name', ''),
                 ':email': body.get('email', ''),
                 ':phone': body.get('phone', ''),
+                ':age': int(body.get('age', 0)),
                 ':user_id': user_id,
                 ':update_date': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 ':update_user': user_name

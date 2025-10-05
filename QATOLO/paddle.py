@@ -119,8 +119,8 @@ def verify_paddle_signature(event):
     data = payload.get('data', {})
     status = data.get('status')
 
-    if status == "activated":
-        activated_event(data, status)
+    if status == "active":
+        active_event(data, status)
     if status == "canceled":
         canceled_event(data, status)
     if status == "trialing":
@@ -128,7 +128,9 @@ def verify_paddle_signature(event):
     if status == "past_due":
         past_due_event(data, status)
     if status == "paid":
-        paid_event(data, "activated")
+        paid_event(data, "active")
+    if status == "paused":
+        paused_event(data, status)
     return {"statusCode": 200, "body": json.dumps({"ok": True})}
 
 
@@ -150,13 +152,20 @@ def canceled_event(payload, status):
                 transaction_status=status, customer_id=customer_id, due_date=None)
 
 
-def activated_event(payload, status):
+def active_event(payload, status):
     transaction_id = payload.get("id")
     customer_id = payload.get("customer_id")
     user_id = payload.get("custom_data", {}).get("appUserId")
-    due_date = payload.get("billing_period").get("ends_at")
+    # due_date = payload.get("billing_period").get("ends_at")
     update_user(user_id=user_id, transaction_id=transaction_id,
-                transaction_status=status, customer_id=customer_id, due_date=due_date)
+                transaction_status=status, customer_id=customer_id, due_date=None)
+
+def paused_event(payload, status):
+    transaction_id = payload.get("id")
+    customer_id = payload.get("customer_id")
+    user_id = payload.get("custom_data", {}).get("appUserId")
+    update_user(user_id=user_id, transaction_id=transaction_id,
+                transaction_status=status, customer_id=customer_id, due_date=None)
 
 
 def past_due_event(payload, status):
