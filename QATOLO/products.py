@@ -74,7 +74,7 @@ def get_products_by_user_id(user_id: str):
                 "currency": item.get("currency", ""),
                 "imagesUrl": images,
                 "category_id": item.get("category_id", ""),
-                "is_available": item.get("is_available", False)
+                "is_available": item.get("is_available", "unavailable")
             })
         return {
             'statusCode': 200,  # No uses 204
@@ -126,7 +126,7 @@ def get_products_by_business_id(business_id: str):
                 "currency": item.get("currency", ""),
                 "imagesUrl": images,
                 "category_id": item.get("category_id", ""),
-                "is_available": item.get("is_available", False)
+                "is_available": item.get("is_available", "unavailable")
             })
         return {
             'statusCode': 200,  # No uses 204
@@ -383,7 +383,6 @@ def delete_image(file_url):
     try:
         file_name = file_url.split(
             'https://qatalo.s3.us-east-1.amazonaws.com/')[1]
-        print(file_name)
         s3.delete_object(Bucket=os.getenv('BUCKET_NAME'), Key=file_name)
         return True
     except Exception as e:

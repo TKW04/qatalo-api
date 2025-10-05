@@ -118,7 +118,8 @@ def get_customer_transaction(customer_id: str):
                 "family_name": item.get("family_name", ""),
                 "email": item.get("email", ""),
                 "phone": item.get("phone", ""),
-                "transactions": item.get("transactions", [])
+                "transactions": item.get("transactions", []),
+
             }
             if customer and "transactions" in customer:
                 return {
@@ -181,6 +182,7 @@ def create_customer(event):
                     "quantity": transaction.get('quantity', 1),
                     "price": Decimal(transaction.get("price", 0.00)),
                     "status": "Pendiente de pago",
+                    "accept_terms": transaction.get("accept_terms", False),
                     "payment_method": payment_method.get("Item", {}),
                     "create_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     "create_user": body.get('email', '')
@@ -259,6 +261,7 @@ def create_customer_transaction(body):
         "quantity": transaction.get('quantity', 1),
         "price": Decimal(transaction.get("price", 0.00)),
         "status": "Pendiente de pago",
+        "accept_terms": transaction.get("accept_terms", False),
         "payment_method": payment_method.get("Item", {}),
         "create_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "create_user": body.get('email', '')
