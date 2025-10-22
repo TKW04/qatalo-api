@@ -76,7 +76,9 @@ def get_products_by_user_id(user_id: str):
                 "currency": item.get("currency", ""),
                 "imagesUrl": images,
                 "category_id": item.get("category_id", ""),
-                "is_available": item.get("is_available", "unavailable")
+                "is_available": item.get("is_available", "unavailable"),
+                "required_delivery_day": bool(item.get("required_delivery_day", False) if item.get("required_delivery_day", False) in [True, 'true', 'True', 1, '1'] else False),
+                "delivery_start_day": item.get("delivery_start_day", ""),
             })
         return {
             'statusCode': 200,  # No uses 204
@@ -130,7 +132,9 @@ def get_products_by_business_id(business_id: str):
                 "currency": item.get("currency", ""),
                 "imagesUrl": images,
                 "category_id": item.get("category_id", ""),
-                "is_available": item.get("is_available", "unavailable")
+                "is_available": item.get("is_available", "unavailable"),
+                "required_delivery_day": bool(item.get("required_delivery_day", False) if item.get("required_delivery_day", False) in [True, 'true', 'True', 1, '1'] else False),
+                "delivery_start_day": item.get("delivery_start_day", ""),
             })
         return {
             'statusCode': 200,  # No uses 204
@@ -214,6 +218,8 @@ def create_product(event, user_name, user_id):
                 "is_available": product_create.get("is_available", "unavailable"),
                 "min_age_allow": product_create.get("min_age_allow", False),
                 "min_age": int(product_create.get("min_age", 0)),
+                "required_delivery_day": product_create.get("required_delivery_day", False),
+                "delivery_start_day": product_create.get("delivery_start_day", ""),
                 "user_id": user_id,
                 "create_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "create_user": user_name,
@@ -286,7 +292,7 @@ def update_product(event, user_name, product_id, user_id):
 
         products_table.update_item(
             Key={"product_id": product_id},
-            UpdateExpression="SET product_name = :product_name, description = :description, price = :price, quantity = :quantity, orden = :orden, just_one = :just_one, show_quantity = :show_quantity, terms = :terms, min_age_allow = :min_age_allow, min_age = :min_age, currency = :currency, imagesUrl = :imagesUrl, category_id = :category_id, is_available = :is_available, user_id = :user_id, update_date = :update_date, update_user = :update_user",
+            UpdateExpression="SET product_name = :product_name, description = :description, price = :price, quantity = :quantity, orden = :orden, just_one = :just_one, show_quantity = :show_quantity, terms = :terms, min_age_allow = :min_age_allow, min_age = :min_age, required_delivery_day = :required_delivery_day, delivery_start_day = :delivery_start_day, currency = :currency, imagesUrl = :imagesUrl, category_id = :category_id, is_available = :is_available, user_id = :user_id, update_date = :update_date, update_user = :update_user",
             ExpressionAttributeValues={
                 ':description': product_update.get('description', ''),
                 ':product_name': product_update.get('name', ''),
@@ -302,6 +308,8 @@ def update_product(event, user_name, product_id, user_id):
                 ':imagesUrl': images,
                 ':category_id': product_update.get('category_id', ''),
                 ':is_available': product_update.get('is_available', 'unavailable'),
+                ':required_delivery_day': product_update.get('required_delivery_day', False),
+                ':delivery_start_day': product_update.get('delivery_start_day', ''),
                 ':user_id': user_id,
                 ':update_date': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 ':update_user': user_name

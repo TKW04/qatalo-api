@@ -80,7 +80,8 @@ def get_customers_by_user_id(user_id: str):
                     "transactions": item.get("transactions", []),
                     "email": item.get("email", ""),
                     "phone": item.get("phone", ""),
-                    "age": int(item.get("age", 0))
+                    "age": int(item.get("age", 0)),
+                    "delivery_day": item.get("delivery_day", "")
                 })
         return {
             'statusCode': 200,  # No uses 204
@@ -120,6 +121,7 @@ def get_customer_transaction(customer_id: str):
                 "email": item.get("email", ""),
                 "phone": item.get("phone", ""),
                 "age": int(item.get("age", 0)),
+                "delivery_day": item.get("delivery_day", ""),
                 "transactions": item.get("transactions", []),
 
             }
@@ -186,6 +188,7 @@ def create_customer(event):
                     "status": "Pendiente de pago",
                     "accept_terms": transaction.get("accept_terms", False),
                     "payment_method": payment_method.get("Item", {}),
+                    "delivery_day": transaction.get("delivery_day", ""),
                     "create_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     "create_user": body.get('email', '')
                 })
@@ -266,6 +269,7 @@ def create_customer_transaction(body):
         "status": "Pendiente de pago",
         "accept_terms": transaction.get("accept_terms", False),
         "payment_method": payment_method.get("Item", {}),
+        "delivery_day": transaction.get("delivery_day", ""),
         "create_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "create_user": body.get('email', '')
     })
