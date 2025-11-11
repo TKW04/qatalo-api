@@ -159,6 +159,53 @@ def order_create_email(to_address, to_name, order_details):
             'body': json.dumps({'message': str(e)})
         }
 
+def new_order_create_email(to_address, to_name, order_details):
+
+    try:
+        mail = emails.NewEmail(MAIL_API_TOKEN)
+        template = env.get_template("new_order_owner.html")
+        response = mail.send(
+            {
+                "from": {
+                    "email": "info@qatalo.online",
+                    "name": "Qatalo Support"
+                },
+                "to": [
+                    {
+                        "email": to_address,
+                        "name": to_name
+                    }
+                ],
+                "subject": "Pedido recibido - Qatalo",
+                "html": template.render(business_name=order_details.get('business_name', 'Qatalo'),
+                                        business_logo_url=order_details.get(
+                                            'business_logo_url', ''),
+                                        transaction_id=order_details['transaction_id'],
+                                        order_date=order_details['order_date'],
+                                        product_name=order_details['product_name'],
+                                        quantity=order_details['quantity'],
+                                        total_amount=order_details['total_amount'],
+                                        currency=order_details['currency'],
+                                        upload_link=order_details['upload_link'],
+                                        business_email=order_details['business_email'],
+                                        business_phone=order_details['business_phone'],
+                                        customer_name=order_details['customer_name'],)
+            }
+        )
+        return {
+            'statusCode': 200,
+            'headers': {'Access-Control-Allow-Origin': '*'}
+        }
+
+    except Exception as e:
+        print(json.dumps({"event": "create_orden_email", "Error": str(e)}))
+        return {
+            'statusCode': 500,
+            'headers': {'Access-Control-Allow-Origin': '*'},
+            'body': json.dumps({'message': str(e)})
+        }
+
+
 
 def order_cancel_email(to_address, to_name, order_details):
 

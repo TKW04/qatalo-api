@@ -2,7 +2,7 @@ import base64
 import io
 import re
 import traceback
-from SendMails.mails import order_cancel_email, order_create_email, order_receipt_email, order_verified_email
+from SendMails.mails import new_order_create_email, order_cancel_email, order_create_email, order_receipt_email, order_verified_email
 import boto3
 import json
 import os
@@ -33,6 +33,8 @@ def customers_routes(path, method, event, user_name, user_id):
         return create_customer(event=event)
     if path == "/customers/transactions" and method == 'POST':
         return upload_receipt(event=event)
+    if path == "/customers/transactions/update" and method == 'PUT':
+        return update_transaction(event=event)
     if path == "/customers/transactions/approve" and method == 'POST':
         return approve_transaction(event=event)
     if path == "/customers/transactions/cancelAdmin" and method == 'POST':
@@ -233,8 +235,13 @@ def create_customer(event):
                     "currency": transaction.get('payment_method', {}).get('currency', ''),
                     "upload_link": payment_link,
                     "business_email": user_attrs.get("email", "Qatalo"),
-                    "business_phone": business.get("business_phone", "Qatalo")
+                    "business_phone": business.get("business_phone", "Qatalo"),
+                    "customer_name": f"{body.get('given_name')} {body.get('family_name', '')}"
                 }
+                new_order_create_email(user_attrs.get("email", "Qatalo"),
+                                       to_name=business.get(
+                                           "business_name", "Qatalo"),
+                                       order_details=order_details)
                 return order_create_email(body.get('email'),
                                           to_name=f"{body.get('given_name')} {body.get('family_name')}",
                                           order_details=order_details)
@@ -319,10 +326,14 @@ def create_customer_transaction(body):
         "currency": transaction.get('payment_method', {}).get('currency', ''),
         "upload_link": payment_link,
         "business_email": user_attrs.get("email", "Qatalo"),
-        "business_phone": business.get("business_phone", "Qatalo")
+        "business_phone": business.get("business_phone", "Qatalo"),
+        "customer_name": f"{body.get('given_name')} {body.get('family_name', '')}"
     }
+    new_order_create_email(user_attrs.get("email", "Qatalo"),
+                           to_name=business.get("business_name", "Qatalo"),
+                           order_details=order_details)
     return order_create_email(body.get('email'),
-                              to_name=f"{body.get('given_name')} {body.get('family_name')}",
+                              to_name=f"{body.get('given_name')} {body.get('family_name', '')}",
                               order_details=order_details)
 
 
@@ -653,6 +664,71 @@ def approve_transaction(event):
                 return order_verified_email(customer.get('email'),
                                             to_name=f"{customer.get('given_name')} {customer.get('family_name')}",
                                             order_details=order_details)
+            else:
+                return {
+                    'statusCode': 404,
+                    'headers': {'Access-Control-Allow-Origin': '*'},
+                    'body': json.dumps({'message': 'Transacción no encontrada'})
+                }
+        else:
+            return {
+                'statusCode': 404,
+                'headers': {'Access-Control-Allow-Origin': '*'},
+                'body': json.dumps({'message': 'Cliente no encontrado'})
+            }
+    except Exception as e:
+        print(json.dumps({"event": "approve_transaction", "Error": str(e)}))
+        return {
+            'statusCode': 500,
+            'headers': {'Access-Control-Allow-Origin': '*'},
+            'body': json.dumps({'message': str(e)})
+        }
+
+
+def update_transaction(event):
+    try:
+        body = json.loads(event.get('body', '{}'))
+        customer_id = body.get('customer_id', '')
+        transaction_id = body.get('transaction_id', '')
+
+        response = customers_table.get_item(Key={"customer_id": customer_id})
+        if "Item" in response:
+            item = response["Item"]
+
+            customer = {
+                "customer_id": item.get("customer_id", ""),
+                "business_id": item.get("business_id", ""),
+                "given_name": item.get("given_name", ""),
+                "family_name": item.get("family_name", ""),
+                "email": item.get("email", ""),
+                "phone": item.get("phone", ""),
+                "transactions": item.get("transactions", [])
+            }
+            transaction = next((tran for tran in customer.get("transactions", []) if tran.get(
+                "transaction_id", "") == transaction_id), None)
+            if transaction:
+                transaction["delivery_day"] = body.get(
+                    "delivery_day", transaction.get("delivery_day", ""))
+                transaction["price"] = body.get(
+                    "price", transaction.get("price", ""))
+                transaction["quantity"] = body.get(
+                    "quantity", transaction.get("quantity", ""))
+
+                customers_table.update_item(
+                    Key={"customer_id": customer.get("customer_id", "")},
+                    UpdateExpression="SET transactions = :transactions, update_date = :update_date, update_user = :update_user",
+                    ExpressionAttributeValues={
+                        ':transactions': customer.get("transactions", []),
+                        ':update_date': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        ':update_user': customer.get("email", "")
+                    },
+                    ReturnValues="UPDATED_NEW"
+                )
+
+                return {
+                    'statusCode': 200,
+                    'headers': {'Access-Control-Allow-Origin': '*'}
+                }
             else:
                 return {
                     'statusCode': 404,
