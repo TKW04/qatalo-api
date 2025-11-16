@@ -340,3 +340,48 @@ def order_verified_email(to_address, to_name, order_details):
             'headers': {'Access-Control-Allow-Origin': '*'},
             'body': json.dumps({'message': str(e)})
         }
+
+def order_delivered_email(to_address, to_name, order_details):
+
+    try:
+        mail = emails.NewEmail(MAIL_API_TOKEN)
+        template = env.get_template("order_delivered.html")
+        response = mail.send(
+            {
+                "from": {
+                    "email": "info@qatalo.online",
+                    "name": "Qatalo Support"
+                },
+                "to": [
+                    {
+                        "email": to_address,
+                        "name": to_name
+                    }
+                ],
+                "subject": "Entrega de Orden - Qatalo",
+                "html": template.render(business_name=order_details.get('business_name', 'Qatalo'),
+                                        business_logo_url=order_details.get(
+                                            'business_logo_url', ''),
+                                        transaction_id=order_details['transaction_id'],
+                                        order_date=order_details['order_date'],
+                                        product_name=order_details['product_name'],
+                                        quantity=order_details['quantity'],
+                                        total_amount=order_details['total_amount'],
+                                        currency=order_details['currency'],
+                                        business_website_url=order_details['business_website_url'],
+                                        business_email=order_details['business_email'],
+                                        business_phone=order_details['business_phone'])
+            }
+        )
+        return {
+            'statusCode': 200,
+            'headers': {'Access-Control-Allow-Origin': '*'}
+        }
+
+    except Exception as e:
+        print(json.dumps({"event": "create_orden_email", "Error": str(e)}))
+        return {
+            'statusCode': 500,
+            'headers': {'Access-Control-Allow-Origin': '*'},
+            'body': json.dumps({'message': str(e)})
+        }

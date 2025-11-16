@@ -2,7 +2,7 @@ import base64
 import io
 import re
 import traceback
-from SendMails.mails import new_order_create_email, order_cancel_email, order_create_email, order_receipt_email, order_verified_email
+from SendMails.mails import new_order_create_email, order_cancel_email, order_create_email, order_delivered_email, order_receipt_email, order_verified_email
 import boto3
 import json
 import os
@@ -41,6 +41,8 @@ def customers_routes(path, method, event, user_name, user_id):
         return cancel_transaction(event=event)
     if path == "/customers/transactions/cancel" and method == 'POST':
         return cancel_transaction(event=event)
+    if path == "/customers/transactions/delivered" and method == 'POST':
+        return delivered_transaction(event=event)
 
     match = re.fullmatch(r'/customers/([^/]+)', path)
     if match:
@@ -79,12 +81,15 @@ def get_customers_by_user_id(user_id: str):
                     "business_id": item.get("business_id", ""),
                     "given_name": item.get("given_name", ""),
                     "family_name": item.get("family_name", ""),
+                    "full_name": f"{item.get('given_name', '')} {item.get('family_name', '')}",
                     "transactions": item.get("transactions", []),
                     "email": item.get("email", ""),
                     "phone": item.get("phone", ""),
                     "age": int(item.get("age", 0)),
                     "delivery_day": item.get("delivery_day", "")
                 })
+            sorted_customers = sorted(customers, key=lambda x: x['full_name'], reverse=False)
+            customers = sorted_customers
         return {
             'statusCode': 200,  # No uses 204
             'headers': {
@@ -662,6 +667,111 @@ def approve_transaction(event):
                     "business_phone": business.get("business_phone", "Qatalo")
                 }
                 return order_verified_email(customer.get('email'),
+                                            to_name=f"{customer.get('given_name')} {customer.get('family_name')}",
+                                            order_details=order_details)
+            else:
+                return {
+                    'statusCode': 404,
+                    'headers': {'Access-Control-Allow-Origin': '*'},
+                    'body': json.dumps({'message': 'Transacción no encontrada'})
+                }
+        else:
+            return {
+                'statusCode': 404,
+                'headers': {'Access-Control-Allow-Origin': '*'},
+                'body': json.dumps({'message': 'Cliente no encontrado'})
+            }
+    except Exception as e:
+        print(json.dumps({"event": "approve_transaction", "Error": str(e)}))
+        return {
+            'statusCode': 500,
+            'headers': {'Access-Control-Allow-Origin': '*'},
+            'body': json.dumps({'message': str(e)})
+        }
+
+
+def delivered_transaction(event):
+    try:
+        body = json.loads(event.get('body', '{}'))
+        customer_id = body.get('customer_id', '')
+        transaction_id = body.get('transaction_id', '')
+
+        response = customers_table.get_item(Key={"customer_id": customer_id})
+        if "Item" in response:
+            item = response["Item"]
+
+            customer = {
+                "customer_id": item.get("customer_id", ""),
+                "business_id": item.get("business_id", ""),
+                "given_name": item.get("given_name", ""),
+                "family_name": item.get("family_name", ""),
+                "email": item.get("email", ""),
+                "phone": item.get("phone", ""),
+                "transactions": item.get("transactions", [])
+            }
+            transaction = next((tran for tran in customer.get("transactions", []) if tran.get(
+                "transaction_id", "") == transaction_id), None)
+            if transaction:
+                transaction["status"] = "Entregada"
+                customers_table.update_item(
+                    Key={"customer_id": customer.get("customer_id", "")},
+                    UpdateExpression="SET transactions = :transactions, update_date = :update_date, update_user = :update_user",
+                    ExpressionAttributeValues={
+                        ':transactions': customer.get("transactions", []),
+                        ':update_date': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        ':update_user': customer.get("email", "")
+                    },
+                    ReturnValues="UPDATED_NEW"
+                )
+                business_response = business_table.get_item(
+                    Key={"business_id": customer.get("business_id", "")})
+                business = business_response["Item"]
+
+                user = cognito.admin_get_user(
+                    UserPoolId=USER_POOL_ID,
+                    Username=business.get("user_id", "")
+                )
+
+                # Formatear los atributos
+                user_attrs = {attr['Name']: attr['Value']
+                              for attr in user['UserAttributes']}
+
+                product_response = products_table.get_item(
+                    Key={"product_id": transaction.get("product_id", "")})
+                product = product_response["Item"]
+                quantity = int(product.get("quantity", 0)) - \
+                    int(transaction.get("quantity", 1))
+                if quantity < 0:
+                    quantity = 0
+
+                product["quantity"] = quantity
+                products_table.update_item(
+                    Key={"product_id": product.get("product_id", "")},
+                    UpdateExpression="SET quantity = :quantity, update_date = :update_date, update_user = :update_user",
+                    ExpressionAttributeValues={
+                        ':quantity': product.get("quantity", 0),
+                        ':update_date': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        ':update_user': user_attrs.get("email", "")
+                    },
+                    ReturnValues="UPDATED_NEW"
+                )
+
+                business_website_url = f"{FRONT_END_URL}/catalog/{business.get('business_slug', '')}"
+
+                order_details = {
+                    "business_name": business.get("business_name", "Qatalo"),
+                    "business_logo_url": business.get("business_logo_url", ""),
+                    "transaction_id": transaction_id,
+                    "order_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "product_name": transaction.get('product_name', ''),
+                    "quantity": transaction.get('quantity', 1),
+                    "total_amount": str((Decimal(transaction.get("price", 0.00)) * int(transaction.get("quantity", 1)))),
+                    "currency": transaction.get('payment_method', {}).get('currency', ''),
+                    "business_website_url": business_website_url,
+                    "business_email": user_attrs.get("email", "Qatalo"),
+                    "business_phone": business.get("business_phone", "Qatalo")
+                }
+                return order_delivered_email(customer.get('email'),
                                             to_name=f"{customer.get('given_name')} {customer.get('family_name')}",
                                             order_details=order_details)
             else:

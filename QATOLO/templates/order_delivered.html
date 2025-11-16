@@ -447,23 +447,18 @@
       <!-- Header -->
       <div class="header">
         <div class="logo">
-          <img
-            src="{{ business_logo_url }}"
-            alt="CatalogQR Logo"
-            width="200"
-          />
+          <img src="{{ business_logo_url }}" alt="CatalogQR Logo" width="200" />
         </div>
-        <div class="status-badge">✅ Orden Recibida</div>
+        <div class="status-badge">✅ Orden Entregada</div>
       </div>
 
       <!-- Content -->
       <div class="content">
-        <div class="greeting">¡El cliente {{ customer_name }} ha realizado un nuevo pedido!</div>
+        <div class="greeting">¡Gracias por tu compra!</div>
 
         <div class="confirmation-message">
-          Hemos recibido una nueva orden en tu tienda {{ business_name }}. A
-          continuación, encontrarás los detalles de la orden y las instrucciones
-          para proceder con el pago.
+          Tu orden ha sido entregada con éxito. Esperamos que disfrutes de tu
+          compra. A continuación, encontrarás el resumen de tu orden
         </div>
 
         <!-- Order Summary -->
@@ -497,13 +492,11 @@
 
         <!-- CTA Section -->
         <div class="cta-section">
-          <div class="cta-title">Más información</div>
+          <div class="cta-title">Seguir comprando</div>
           <div class="cta-description">
-            Haz clic en el botón de abajo y valida tu pago.
+            Haz clic en el botón de abajo y visita nuestra tienda.
           </div>
-          <a href="{{ upload_link }}" class="upload-button"
-            >Validar pago</a
-          >
+          <a href="{{ business_website_url }}" class="upload-button">Visitar tienda</a>
         </div>
 
         <!-- Status Timeline -->
@@ -513,43 +506,33 @@
           <div class="timeline-item">
             <div class="timeline-status completed">✓</div>
             <div class="timeline-text completed">
-              Orden recibida y confirmada
+              Orden entregada con éxito
             </div>
           </div>
 
           <div class="timeline-item">
-            <div class="timeline-status pending">2</div>
-            <div class="timeline-text">Esperando comprobante de pago</div>
+            <div class="timeline-status completed">✓</div>
+            <div class="timeline-text completed">Esperando comprobante de pago</div>
           </div>
 
           <div class="timeline-item">
-            <div class="timeline-status upcoming">3</div>
-            <div class="timeline-text upcoming">Verificación de pago</div>
+            <div class="timeline-status completed">✓</div>
+            <div class="timeline-text completed">Verificación de pago</div>
           </div>
 
           <div class="timeline-item">
-            <div class="timeline-status upcoming">4</div>
-            <div class="timeline-text upcoming">Entrega de orden</div>
+            <div class="timeline-status completed">✓</div>
+            <div class="timeline-text completed">Entrega de orden</div>
           </div>
         </div>
+        
 
         <!-- Important Note -->
-        <div class="important-note">
-          <div class="note-title">⚠️ Información importante</div>
-          <div class="note-text">
-            • El comprobante debe mostrar claramente el monto, fecha y método de
-            pago<br />
-            • Formatos aceptados: JPG, PNG (máximo 5MB)<br />
-            • Verificaremos tu pago en un máximo de 24 horas<br />
-            • Recibirás un email de confirmación una vez tu pago haya sido
-            verificado
-          </div>
-        </div>
-
         <div style="margin-top: 30px; color: #34699a; text-align: center">
           <strong>¿Tienes preguntas?</strong><br />
           Contáctanos en:<br />
-          Email: <strong style="color: #113f67">{{ business_email }}</strong><br/>
+          Email: <strong style="color: #113f67">{{ business_email }}</strong
+          ><br />
           Teléfono: <strong style="color: #113f67">{{ business_phone }}</strong>
         </div>
       </div>
