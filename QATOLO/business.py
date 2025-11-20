@@ -19,14 +19,14 @@ USER_POOL_ID = os.environ.get('USER_POOL_ID')
 s3 = boto3.client('s3')
 
 
-def business_routes(path, method, event, user_name, user_id):
-    if path == '/businesses' and method == 'POST':
+def business_routes(path, method, event, user_name, user_id, alias):
+    if path == f'/{alias}/businesses' and method == 'POST':
         return create_business(event=event, user_name=user_name, user_id=user_id)
 
-    if path == '/businesses' and method == 'GET':
+    if path == f'/{alias}/businesses' and method == 'GET':
         return get_business(user_id=user_id)
 
-    match = re.fullmatch(r'/businesses/([^/]+)', path)
+    match = re.fullmatch(rf'/{alias}/businesses/([^/]+)', path)
     if match:
         id = match.group(1)
         if method == 'PUT':

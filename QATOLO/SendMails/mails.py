@@ -159,6 +159,7 @@ def order_create_email(to_address, to_name, order_details):
             'body': json.dumps({'message': str(e)})
         }
 
+
 def new_order_create_email(to_address, to_name, order_details):
 
     try:
@@ -204,7 +205,6 @@ def new_order_create_email(to_address, to_name, order_details):
             'headers': {'Access-Control-Allow-Origin': '*'},
             'body': json.dumps({'message': str(e)})
         }
-
 
 
 def order_cancel_email(to_address, to_name, order_details):
@@ -341,6 +341,7 @@ def order_verified_email(to_address, to_name, order_details):
             'body': json.dumps({'message': str(e)})
         }
 
+
 def order_delivered_email(to_address, to_name, order_details):
 
     try:
@@ -380,6 +381,57 @@ def order_delivered_email(to_address, to_name, order_details):
 
     except Exception as e:
         print(json.dumps({"event": "create_orden_email", "Error": str(e)}))
+        return {
+            'statusCode': 500,
+            'headers': {'Access-Control-Allow-Origin': '*'},
+            'body': json.dumps({'message': str(e)})
+        }
+
+
+def contact_team_email(to_address, to_name, login_link, message):
+
+    try:
+        mail = emails.NewEmail(MAIL_API_TOKEN)
+        template = env.get_template("contact_team.html")
+        response = mail.send(
+            {
+                "from": {
+                    "email": "info@qatalo.online",
+                    "name": "Qatalo Support"
+                },
+                "to": [
+                    {
+                        "email": to_address,
+                        "name": to_name
+                    }
+                ],
+                "subject": "Gracias por contactarnos - Qatalo",
+                "html": template.render(login_link=login_link, name=to_name)
+            })
+        template = env.get_template("to_team.html")
+        response = mail.send(
+            {
+                "from": {
+                    "email": "info@qatalo.online",
+                    "name": "Qatalo Support"
+                },
+                "to": [
+                    {
+                        "email": "info@qatalo.online",
+                        "name": "Qatalo Support"
+                    }
+                ],
+                "subject": f"{to_name}, nos envió un mensaje",
+                "html": template.render(name=to_name, message=message)
+            })
+        
+        return {
+            'statusCode': 200,
+            'headers': {'Access-Control-Allow-Origin': '*'}
+        }
+
+    except Exception as e:
+        print(json.dumps({"event": "contact_team_email", "Error": str(e)}))
         return {
             'statusCode': 500,
             'headers': {'Access-Control-Allow-Origin': '*'},

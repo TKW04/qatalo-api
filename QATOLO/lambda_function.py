@@ -1,6 +1,8 @@
 import base64
 import json
 
+# from contact_team import contact_team_routes
+from contact_team import contact_team_routes
 from customers import customers_routes
 from payment_methods import payment_methods_routes
 from products import products_routes
@@ -13,6 +15,8 @@ from categories import categories_routes
 def lambda_handler(event, context):
     try:
         headers = event.get('headers', {})
+        arn = context.invoked_function_arn
+        alias = arn.split(":")[-1]
         auth_header = headers.get(
             'Authorization') or headers.get('authorization')
         token = auth_header
@@ -23,25 +27,25 @@ def lambda_handler(event, context):
             decoded = decode_jwt_payload(token)
             user_name = decoded.get("email")
             user_id = decoded.get("sub")
-
         path = event.get('rawPath', '')
         method = event.get('requestContext', {}).get(
             'http', {}).get('method', '')
         if "paddle" in path:
-            return paddle_routes(event, user_name=user_name, method=method, path=path)
+            return paddle_routes(event, method=method, path=path, alias=alias)
         if "users" in path:
-            return users_routes(path=path, method=method, event=event)
+            return users_routes(path=path, method=method, event=event, alias=alias)
         if "businesses" in path:
-            return business_routes(path=path, method=method, event=event, user_name=user_name, user_id=user_id)
+            return business_routes(path=path, method=method, event=event, user_name=user_name, user_id=user_id, alias=alias)
         if "categories" in path:
-            return categories_routes(path=path, method=method, event=event, user_name=user_name, user_id=user_id)
+            return categories_routes(path=path, method=method, event=event, user_name=user_name, user_id=user_id, alias=alias)
         if "products" in path:
-            return products_routes(path=path, method=method, event=event, user_name=user_name, user_id=user_id)
+            return products_routes(path=path, method=method, event=event, user_name=user_name, user_id=user_id, alias=alias)
         if "payment_methods" in path:
-            return payment_methods_routes(path=path, method=method, event=event, user_name=user_name, user_id=user_id)
+            return payment_methods_routes(path=path, method=method, event=event, user_name=user_name, user_id=user_id, alias=alias)
         if "customers" in path:
-            return customers_routes(path=path, method=method, event=event, user_name=user_name, user_id=user_id)
-
+            return customers_routes(path=path, method=method, event=event, user_name=user_name, user_id=user_id, alias=alias)
+        if "team" in path:
+            return contact_team_routes(path=path, method=method, event=event, alias=alias)
     except Exception as e:
         print(f"Error processing request: {str(e)}")
         return {

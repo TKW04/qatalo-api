@@ -12,14 +12,14 @@ USER_POOL_ID = os.environ.get('USER_POOL_ID')
 FRONT_END_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
 
 
-def users_routes(path, method, event):
+def users_routes(path, method, event, alias):
 
-    if path == "/users" and method == 'POST':
+    if path == f"/{alias}/users" and method == 'POST':
         return register_user(event=event)
-    if path == "/users/change-password" and method == 'POST':
+    if path == f"/{alias}/users/change-password" and method == 'POST':
         return reset_password(event=event)
 
-    match_forgot = re.fullmatch(r'/users/forgot-password/([^/]+)', path)
+    match_forgot = re.fullmatch(rf'/{alias}/users/forgot-password/([^/]+)', path)
     if match_forgot:
         user_name = match_forgot.group(1)
         if method == 'POST':

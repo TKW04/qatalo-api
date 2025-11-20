@@ -25,26 +25,26 @@ s3 = boto3.client('s3')
 FRONT_END_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
 
 
-def customers_routes(path, method, event, user_name, user_id):
+def customers_routes(path, method, event, user_name, user_id, alias):
 
-    if path == "/customers" and method == 'GET':
+    if path == f"/{alias}/customers" and method == 'GET':
         return get_customers_by_user_id(user_id=user_id)
-    if path == "/customers" and method == 'POST':
+    if path == f"/{alias}/customers" and method == 'POST':
         return create_customer(event=event)
-    if path == "/customers/transactions" and method == 'POST':
+    if path == f"/{alias}/customers/transactions" and method == 'POST':
         return upload_receipt(event=event)
-    if path == "/customers/transactions/update" and method == 'PUT':
+    if path == f"/{alias}/customers/transactions/update" and method == 'PUT':
         return update_transaction(event=event)
-    if path == "/customers/transactions/approve" and method == 'POST':
+    if path == f"/{alias}/customers/transactions/approve" and method == 'POST':
         return approve_transaction(event=event)
-    if path == "/customers/transactions/cancelAdmin" and method == 'POST':
+    if path == f"/{alias}/customers/transactions/cancelAdmin" and method == 'POST':
         return cancel_transaction(event=event)
-    if path == "/customers/transactions/cancel" and method == 'POST':
+    if path == f"/{alias}/customers/transactions/cancel" and method == 'POST':
         return cancel_transaction(event=event)
-    if path == "/customers/transactions/delivered" and method == 'POST':
+    if path == f"/{alias}/customers/transactions/delivered" and method == 'POST':
         return delivered_transaction(event=event)
 
-    match = re.fullmatch(r'/customers/([^/]+)', path)
+    match = re.fullmatch(rf'/{alias}/customers/([^/]+)', path)
     if match:
         customer_id = match.group(1)
         if method == 'PUT':

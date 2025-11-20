@@ -8,68 +8,66 @@ from types import SimpleNamespace
 from SendMails.mails import past_due_email
 from paddle_billing.Notifications import Secret, Verifier
 
-PADDLE_API_KEY = os.environ['PADDLE_API_KEY']            # sandbox API key
-PADDLE_API_BASE = os.environ.get(
-    'PADDLE_API_BASE', 'https://sandbox-api.paddle.com')
-PADDLE_WEBHOOK_SECRET = os.environ['PADDLE_WEBHOOK_SECRET']
-
 cognito = boto3.client('cognito-idp')
 USER_POOL_ID = os.environ.get('USER_POOL_ID')
 FRONT_END_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
 
-HEADERS = {
-    "Authorization": f"Bearer {PADDLE_API_KEY}",
-    "Content-Type": "application/json"
-}
 
-
-def paddle_routes(event, user_name, method, path):
+def paddle_routes(event, method, path, alias):
 
     # obtener productos
-    if path == "/paddle/products" and method.upper() == "GET":
-        return get_products()
+    if path == f"/{alias}/paddle/products" and method.upper() == "GET":
+        return get_plans(alias=alias)
 
     match = re.fullmatch(
-        r'/paddle/subscription/([^/]+)', path)
+        rf'/{alias}/paddle/subscription/([^/]+)', path)
     if match:
         subscription_id = match.group(1)
-        print(f"subscription_id: {subscription_id}")
         if method.upper() == "GET":
-            return get_subscription(subscription_id=subscription_id)
+            return get_subscription(subscription_id=subscription_id, alias=alias)
 
     # webhook
-    if path == "/paddle/webhook" and method.upper() == "POST":
-        verify_paddle_signature(event)
+    if path == f"/{alias}/paddle/webhook" and method.upper() == "POST":
+        verify_paddle_signature(event=event, alias=alias)
 
     return {"statusCode": 404, "body": "Not found"}
 
 
-def get_products():
+def get_plans(alias: str):
     try:
-        # 1. Obtener todos los precios
-        prices_resp = requests.get(
-            f"{PADDLE_API_BASE}/prices", headers=HEADERS, timeout=10)
-        prices_resp.raise_for_status()
-        prices_data = prices_resp.json().get("data", [])
+        plans_price_ids = os.environ.get(
+            f"PADDLE_PLANS_PRICE_IDS_{alias.upper()}", "")
+        PADDLE_API_KEY = os.environ.get(f'PADDLE_API_KEY_{alias.upper()}', '')
 
-        # 2. Combinar precios con productos
-        combined = []
-        for price in prices_data:
-            combined.append({
-                "price_id": price.get("id"),
-                "product_id": price.get("product_id", ""),
-                "product_name": price.get("name", ""),
-                "currency": price.get("unit_price", {}).get("currency_code"),
-                "unit_price": int(price.get("unit_price").get("amount"))/100 if price.get("unit_price") else 0,
-                "billing_cycle": price.get("billing_cycle").get("interval") if price.get("billing_cycle") else None,
-                "trial_period_interval": price.get("trial_period", {}).get("interval") if price.get("trial_period") else None,
-                "trial_period_frequency": price.get("trial_period", {}).get("frequency") if price.get("trial_period") else None,
-                "description": price.get("description", "")
+        HEADERS = {
+            "Authorization": f"Bearer {PADDLE_API_KEY}",
+            "Content-Type": "application/json"
+        }
+
+        prices = []
+        PADDLE_API_BASE = os.environ.get(
+            f'PADDLE_API_BASE_{alias.upper()}', 'https://api.paddle.com')
+        for price_id in plans_price_ids.split(","):
+            prices_resp = requests.get(
+                f"{PADDLE_API_BASE}/prices/{price_id}", headers=HEADERS, timeout=10)
+            prices_resp.raise_for_status()
+            prices_data = prices_resp.json().get("data", {})
+
+            prices.append({
+                "price_id": prices_data.get("id"),
+                "product_id": prices_data.get("product_id", ""),
+                "product_name": prices_data.get("name", ""),
+                "currency": prices_data.get("unit_price", {}).get("currency_code"),
+                "unit_price": int(prices_data.get("unit_price").get("amount"))/100 if prices_data.get("unit_price") else 0,
+                "billing_cycle": prices_data.get("billing_cycle").get("interval") if prices_data.get("billing_cycle") else None,
+                "trial_period_interval": prices_data.get("trial_period", {}).get("interval") if prices_data.get("trial_period") else None,
+                "trial_period_frequency": prices_data.get("trial_period", {}).get("frequency") if prices_data.get("trial_period") else None,
+                "description": prices_data.get("description", "")
             })
 
         return {
             "statusCode": 200,
-            "body": json.dumps(combined, ensure_ascii=False)
+            "body": json.dumps(prices, ensure_ascii=False)
         }
 
     except Exception as e:
@@ -79,7 +77,7 @@ def get_products():
         }
 
 
-def verify_paddle_signature(event):
+def verify_paddle_signature(event, alias: str):
 
     verifier = Verifier(300)
     body = event.get("body", "")
@@ -93,7 +91,6 @@ def verify_paddle_signature(event):
     normalized_headers = {k.title(): v for k, v in headers.items()}
     # Verifica que exista el header
     if "Paddle-Signature" not in normalized_headers:
-        print(f"Headers recibidos: {list(headers.keys())}")
         return {
             "statusCode": 400,
             "body": json.dumps({"ok": False, "error": "faltó Paddle-Signature"})
@@ -103,6 +100,7 @@ def verify_paddle_signature(event):
     request_like = SimpleNamespace(headers=normalized_headers, body=raw_body)
 
     try:
+        PADDLE_WEBHOOK_SECRET = os.environ[f'PADDLE_WEBHOOK_SECRET_{alias.upper()}']
         integrity = verifier.verify(
             request_like, Secret(PADDLE_WEBHOOK_SECRET))
     except Exception as e:
@@ -159,6 +157,7 @@ def active_event(payload, status):
     # due_date = payload.get("billing_period").get("ends_at")
     update_user(user_id=user_id, transaction_id=transaction_id,
                 transaction_status=status, customer_id=customer_id, due_date=None)
+
 
 def paused_event(payload, status):
     transaction_id = payload.get("id")
@@ -230,11 +229,16 @@ def update_user(user_id, transaction_id, transaction_status, customer_id, due_da
         }
 
 
-def get_subscription(subscription_id: str) -> dict:
+def get_subscription(subscription_id: str, alias: str) -> dict:
     """
     Obtiene los detalles de una suscripción en Paddle Billing.
     """
     try:
+        PADDLE_API_BASE = os.environ.get(
+            f'PADDLE_API_BASE_{alias.upper()}', 'https://api.paddle.com')
+        PADDLE_API_KEY = os.environ.get(
+            f'PADDLE_API_KEY_{alias.upper()}', '')
+
         url = f"{PADDLE_API_BASE}/subscriptions/{subscription_id}"
         headers = {
             "Authorization": f"Bearer {PADDLE_API_KEY}",

@@ -10,14 +10,14 @@ dynamodb = boto3.resource('dynamodb', region_name=os.getenv('AWS_REGION'))
 payment_methods_table = dynamodb.Table("qatalo.payment_methods")
 
 
-def payment_methods_routes(path, method, event, user_name, user_id):
+def payment_methods_routes(path, method, event, user_name, user_id, alias):
 
-    if path == "/payment_methods" and method == 'GET':
+    if path == f"/{alias}/payment_methods" and method == 'GET':
         return get_payment_methods_by_user_id(user_id=user_id)
-    if path == "/payment_methods" and method == 'POST':
+    if path == f"/{alias}/payment_methods" and method == 'POST':
         return create_payment_method(event=event, user_name=user_name, user_id=user_id)
 
-    match = re.fullmatch(r'/payment_methods/([^/]+)', path)
+    match = re.fullmatch(rf'/{alias}/payment_methods/([^/]+)', path)
     if match:
         payment_method_id = match.group(1)
         if method == 'PUT':

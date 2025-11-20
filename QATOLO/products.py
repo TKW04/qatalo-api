@@ -17,16 +17,16 @@ products_table = dynamodb.Table("qatalo.products")
 s3 = boto3.client('s3')
 
 
-def products_routes(path, method, event, user_name, user_id):
+def products_routes(path, method, event, user_name, user_id, alias):
 
-    if path == "/products" and method == 'GET':
+    if path == f"/{alias}/products" and method == 'GET':
         return get_products_by_user_id(user_id=user_id)
-    if path == "/products" and method == 'POST':
+    if path == f"/{alias}/products" and method == 'POST':
         return create_product(event=event, user_name=user_name, user_id=user_id)
-    if path == "/products/delete/image" and method == 'DELETE':
+    if path == f"/{alias}/products/delete/image" and method == 'DELETE':
         return delete_product_image(event=event)
 
-    match = re.fullmatch(r'/products/([^/]+)', path)
+    match = re.fullmatch(rf'/{alias}/products/([^/]+)', path)
     if match:
         product_id = match.group(1)
         if method == 'PUT':

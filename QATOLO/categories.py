@@ -10,14 +10,14 @@ dynamodb = boto3.resource('dynamodb', region_name=os.getenv('AWS_REGION'))
 categories_table = dynamodb.Table("qatalo.categories")
 
 
-def categories_routes(path, method, event, user_name, user_id):
+def categories_routes(path, method, event, user_name, user_id, alias):
 
-    if path == "/categories" and method == 'GET':
+    if path == f"/{alias}/categories" and method == 'GET':
         return get_categories_by_user_id(user_id=user_id)
-    if path == "/categories" and method == 'POST':
+    if path == f"/{alias}/categories" and method == 'POST':
         return create_category(event=event, user_name=user_name, user_id=user_id)
 
-    match = re.fullmatch(r'/categories/([^/]+)', path)
+    match = re.fullmatch(rf'/{alias}/categories/([^/]+)', path)
     if match:
         category_id = match.group(1)
         if method == 'PUT':
