@@ -6,7 +6,6 @@ FRONT_END_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
 
 
 def contact_team_routes(path, method, event, alias):
-    print("Entered contact_team_routes")
     if path == f"/{alias}/team/contact" and method == 'POST':
         return send_contact_team_email(event=event)
 
