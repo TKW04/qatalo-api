@@ -18,28 +18,42 @@ s3 = boto3.client('s3')
 
 
 def products_routes(path, method, event, user_name, user_id, alias):
+    try:
+            if path == f"/{alias}/products" and method == 'GET':
+                return get_products_by_user_id(user_id=user_id)
+            if path == f"/{alias}/products" and method == 'POST':
+                return create_product(event=event, user_name=user_name, user_id=user_id)
+            if path == f"/{alias}/products/delete/image" and method == 'DELETE':
+                return delete_product_image(event=event)
+            
+            match_dropdown = re.fullmatch(rf'/{alias}/products/dropdown/([^/]+)', path)
+            if match_dropdown:
+                business_id = match_dropdown.group(1)
+                if method == 'GET':
+                    return get_product_dropdown(business_id=business_id)
+            
 
-    if path == f"/{alias}/products" and method == 'GET':
-        return get_products_by_user_id(user_id=user_id)
-    if path == f"/{alias}/products" and method == 'POST':
-        return create_product(event=event, user_name=user_name, user_id=user_id)
-    if path == f"/{alias}/products/delete/image" and method == 'DELETE':
-        return delete_product_image(event=event)
+            match = re.fullmatch(rf'/{alias}/products/([^/]+)', path)
+            if match:
+                product_id = match.group(1)
+                if method == 'PUT':
+                    return update_product(event=event, user_name=user_name, product_id=product_id, user_id=user_id)
+                if method == 'GET':
+                    return get_products_by_business_id(business_id=product_id)
+                if method == 'DELETE':
+                    return delete_product(product_id)
 
-    match = re.fullmatch(rf'/{alias}/products/([^/]+)', path)
-    if match:
-        product_id = match.group(1)
-        if method == 'PUT':
-            return update_product(event=event, user_name=user_name, product_id=product_id, user_id=user_id)
-        if method == 'GET':
-            return get_products_by_business_id(business_id=product_id)
-        if method == 'DELETE':
-            return delete_product(product_id)
-
-    return {
-        'statusCode': 404,
-        'body': 'Ruta no encontrada'
-    }
+            return {
+                'statusCode': 404,
+                'body': 'Ruta no encontrada'
+            }
+    except Exception as e:
+        print(json.dumps({"event": "products_routes", "Error": str(e)}))
+        return {
+            'statusCode': 500,
+            'headers': {'Access-Control-Allow-Origin': '*'},
+            'body': json.dumps({'message': str(e)})
+        }
 
 
 def get_products_by_user_id(user_id: str):
@@ -366,6 +380,40 @@ def delete_product_image(event):
             'body': json.dumps({'message': str(e)})
         }
 
+def get_product_dropdown(business_id: str):
+    """
+    Retrieve products for dropdown.
+    """
+    try:
+        response = products_table.scan(
+            FilterExpression=Attr('business_id').eq(business_id)
+        )
+        products = []
+        for item in response.get("Items", []):
+            products.append({
+                "code": item.get("product_id", ""),
+                "name": item.get("product_name", ""),
+                "price": Decimal(item.get("price", 0.0))
+            })
+        sorted_products = sorted(products, key=lambda x: x['name'])
+        return {
+            'statusCode': 200,
+            'headers': {
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Headers': '*',
+                'Access-Control-Allow-Methods': '*'
+            },
+            'body': json.dumps(sorted_products, default=str)
+        }
+    except Exception as e:
+        print(json.dumps({"event": "get_product_dropdown", "Error": str(e)}))
+        return {
+            'statusCode': 500,
+            'headers': {'Access-Control-Allow-Origin': '*'},
+            'body': json.dumps({'message': str(e)})
+        }
+
+# Helpers
 
 def delete_product(product_id: str):
     """
@@ -432,3 +480,4 @@ def upload_image(file_info, user_id=None, type_file="image", product_id=None):
             "trace": traceback.format_exc()
         }))
         return None
+

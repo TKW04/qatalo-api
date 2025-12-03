@@ -31,10 +31,16 @@ def customers_routes(path, method, event, user_name, user_id, alias):
         return get_customers_by_user_id(user_id=user_id)
     if path == f"/{alias}/customers" and method == 'POST':
         return create_customer(event=event)
+    if path == f"/{alias}/customers/noTransaction" and method == 'POST':
+        return create_customer_without_transactions(event=event)
     if path == f"/{alias}/customers/transactions" and method == 'POST':
         return upload_receipt(event=event)
     if path == f"/{alias}/customers/transactions/update" and method == 'PUT':
         return update_transaction(event=event)
+    if path == f"/{alias}/customers/transactions/add" and method == 'POST':
+        return add_transaction(event=event)
+    if path == f"/{alias}/customers/transactions/delete" and method == 'DELETE':
+        return delete_transaction(event=event)
     if path == f"/{alias}/customers/transactions/approve" and method == 'POST':
         return approve_transaction(event=event)
     if path == f"/{alias}/customers/transactions/cancelAdmin" and method == 'POST':
@@ -88,7 +94,8 @@ def get_customers_by_user_id(user_id: str):
                     "age": int(item.get("age", 0)),
                     "delivery_day": item.get("delivery_day", "")
                 })
-            sorted_customers = sorted(customers, key=lambda x: x['full_name'], reverse=False)
+            sorted_customers = sorted(
+                customers, key=lambda x: x['full_name'], reverse=False)
             customers = sorted_customers
         return {
             'statusCode': 200,  # No uses 204
@@ -173,9 +180,9 @@ def create_customer(event):
         transactions = []
         if response.get("Items", []):
             items = response.get("Items", [])
-            if any(item.get("email", "") == body.get('email', '') for item in items):
+            if any(item.get("email", "") == body.get('email', '').strip() for item in items):
                 customer_id = next(item.get("customer_id", "") for item in items if item.get(
-                    "email", "") == body.get('email', ''))
+                    "email", "") == body.get('email', '').strip())
                 transactions = next(item.get("transactions", []) for item in items if item.get(
                     "customer_id", "") == customer_id)
 
@@ -255,6 +262,77 @@ def create_customer(event):
         else:
             return create_customer_transaction(body=body)
 
+    except Exception as e:
+        print(json.dumps({"event": "create_customer", "Error": str(e)}))
+        return {
+            'statusCode': 500,
+            'headers': {'Access-Control-Allow-Origin': '*'},
+            'body': json.dumps({'message': str(e)})
+        }
+
+
+def create_customer_without_transactions(event):
+    """
+    Create a new customer.
+    """
+    try:
+        body = json.loads(event.get('body', '{}'))
+        business_id = body.get('business_id', '')
+        response = customers_table.scan(
+            FilterExpression=Attr('business_id').eq(business_id)
+        )
+        if response.get("Items", []):
+            items = response.get("Items", [])
+            if any(item.get("email", "") == body.get('email', '').strip() for item in items):
+                return {
+                    'statusCode': 409,
+                    'headers': {'Access-Control-Allow-Origin': '*'},
+                    'body': json.dumps({'message': 'Cliente ya existe'})
+                }
+            else:
+                customer_id = str(uuid.uuid4())
+                business_id = body.get('business_id', '')
+                customers_table.put_item(
+                    Item={
+                        "customer_id": customer_id,
+                        "business_id": business_id,
+                        "given_name": body.get('given_name', ''),
+                        "family_name": body.get('family_name', ''),
+                        "email": body.get('email', '').strip(),
+                        "phone": body.get('phone', ''),
+                        "age": int(body.get('age', 0)),
+                        "transactions": [],
+                        "create_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "create_user": body.get('email', '').strip(),
+                        "update_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "update_user": body.get('email', '').strip()
+                    }
+                )
+        else:
+            customer_id = str(uuid.uuid4())
+            business_id = body.get('business_id', '')
+            customers_table.put_item(
+                Item={
+                    "customer_id": customer_id,
+                    "business_id": business_id,
+                    "given_name": body.get('given_name', ''),
+                    "family_name": body.get('family_name', ''),
+                    "email": body.get('email', '').strip(),
+                    "phone": body.get('phone', ''),
+                    "age": int(body.get('age', 0)),
+                    "transactions": [],
+                    "create_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "create_user": body.get('email', '').strip(),
+                    "update_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "update_user": body.get('email', '').strip()
+                }
+            )
+
+        return {
+            'statusCode': 200,
+            'headers': {'Access-Control-Allow-Origin': '*'},
+            'body': json.dumps({'message': 'Cliente creado exitosamente'})
+        }
     except Exception as e:
         print(json.dumps({"event": "create_customer", "Error": str(e)}))
         return {
@@ -772,8 +850,8 @@ def delivered_transaction(event):
                     "business_phone": business.get("business_phone", "Qatalo")
                 }
                 return order_delivered_email(customer.get('email'),
-                                            to_name=f"{customer.get('given_name')} {customer.get('family_name')}",
-                                            order_details=order_details)
+                                             to_name=f"{customer.get('given_name')} {customer.get('family_name')}",
+                                             order_details=order_details)
             else:
                 return {
                     'statusCode': 404,
@@ -823,6 +901,12 @@ def update_transaction(event):
                     "price", transaction.get("price", ""))
                 transaction["quantity"] = body.get(
                     "quantity", transaction.get("quantity", ""))
+                transaction["product_id"] = body.get(
+                    "product_id", transaction.get("product_id", ""))
+                transaction["product_name"] = body.get(
+                    "product_name", transaction.get("product_name", ""))
+                transaction["payment_method"] = body.get(
+                    "payment_method", transaction.get("payment_method", {}))
 
                 customers_table.update_item(
                     Key={"customer_id": customer.get("customer_id", "")},
@@ -860,6 +944,70 @@ def update_transaction(event):
         }
 
 
+def add_transaction(event):
+    try:
+        body = json.loads(event.get('body', '{}'))
+        customer_id = body.get('customer_id', '')
+
+        response = customers_table.get_item(Key={"customer_id": customer_id})
+        if "Item" in response:
+            item = response["Item"]
+
+            customer = {
+                "customer_id": item.get("customer_id", ""),
+                "business_id": item.get("business_id", ""),
+                "given_name": item.get("given_name", ""),
+                "family_name": item.get("family_name", ""),
+                "email": item.get("email", ""),
+                "phone": item.get("phone", ""),
+                "transactions": item.get("transactions", [])
+            }
+            transactions = customer.get("transactions", [])
+
+            transaction_id = str(uuid.uuid4())
+            transactions.append({
+                "transaction_id": transaction_id,
+                "product_id": body.get('product_id', ''),
+                "product_name": body.get('product_name', ''),
+                "quantity": body.get('quantity', 1),
+                "price": Decimal(body.get("price", 0.00)),
+                "status": "Pendiente de pago",
+                "accept_terms": True,
+                "payment_method": body.get('payment_method', {}),
+                "delivery_day": body.get("delivery_day", ""),
+                "create_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "create_user": customer.get('email', '')
+            })
+            customers_table.update_item(
+                Key={"customer_id": customer.get("customer_id", "")},
+                UpdateExpression="SET transactions = :transactions, update_date = :update_date, update_user = :update_user",
+                ExpressionAttributeValues={
+                    ':transactions': customer.get("transactions", []),
+                    ':update_date': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    ':update_user': customer.get("email", "")
+                },
+                ReturnValues="UPDATED_NEW"
+            )
+
+            return {
+                'statusCode': 200,
+                'headers': {'Access-Control-Allow-Origin': '*'}
+            }
+        else:
+            return {
+                'statusCode': 404,
+                'headers': {'Access-Control-Allow-Origin': '*'},
+                'body': json.dumps({'message': 'Cliente no encontrado'})
+            }
+    except Exception as e:
+        print(json.dumps({"event": "approve_transaction", "Error": str(e)}))
+        return {
+            'statusCode': 500,
+            'headers': {'Access-Control-Allow-Origin': '*'},
+            'body': json.dumps({'message': str(e)})
+        }
+
+
 def upload_image(file_info, customer_id=None, transaction_id=None):
     try:
         file_name = f"customers/{customer_id}_receipt_{transaction_id}{file_info['extension']}"
@@ -881,3 +1029,45 @@ def upload_image(file_info, customer_id=None, transaction_id=None):
             "trace": traceback.format_exc()
         }))
         return None
+
+def delete_transaction(event):
+    """
+    Delete a transaction from a customer by its ID.
+    """
+    try:
+        body = json.loads(event.get('body', '{}'))
+        customer_id = body.get('customer_id', '')
+        transaction_id = body.get('transaction_id', '')
+
+        response = customers_table.get_item(Key={"customer_id": customer_id})
+        if "Item" in response:
+            item = response["Item"]
+            transactions = item.get("transactions", [])
+            transactions = [tran for tran in transactions if tran.get(
+                "transaction_id", "") != transaction_id]
+            customers_table.update_item(
+                Key={"customer_id": customer_id},
+                UpdateExpression="SET transactions = :transactions",
+                ExpressionAttributeValues={
+                    ':transactions': transactions
+                },
+                ReturnValues="UPDATED_NEW"
+            )
+            return {
+                'statusCode': 200,
+                'headers': {'Access-Control-Allow-Origin': '*'},
+                'body': json.dumps({'message': 'Transacción eliminada correctamente'})
+            }
+        else:
+            return {
+                'statusCode': 404,
+                'headers': {'Access-Control-Allow-Origin': '*'},
+                'body': json.dumps({'message': 'Cliente no encontrado'})
+            }
+    except Exception as e:
+        print(json.dumps({"event": "delete_transaction", "Error": str(e)}))
+        return {
+            'statusCode': 500,
+            'headers': {'Access-Control-Allow-Origin': '*'},
+            'body': json.dumps({'message': str(e)})
+        }
