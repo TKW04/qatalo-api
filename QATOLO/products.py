@@ -12,47 +12,57 @@ from requests_toolbelt.multipart import decoder
 from boto3.dynamodb.conditions import Attr
 from datetime import datetime
 
-dynamodb = boto3.resource('dynamodb', region_name=os.getenv('AWS_REGION'))
+dynamodb = boto3.resource("dynamodb", region_name=os.getenv("AWS_REGION"))
 products_table = dynamodb.Table("qatalo.products")
-s3 = boto3.client('s3')
+s3 = boto3.client("s3")
 
 
 def products_routes(path, method, event, user_name, user_id, alias):
     try:
-            if path == f"/{alias}/products" and method == 'GET':
-                return get_products_by_user_id(user_id=user_id)
-            if path == f"/{alias}/products" and method == 'POST':
-                return create_product(event=event, user_name=user_name, user_id=user_id)
-            if path == f"/{alias}/products/delete/image" and method == 'DELETE':
-                return delete_product_image(event=event)
-            
-            match_dropdown = re.fullmatch(rf'/{alias}/products/dropdown/([^/]+)', path)
+        if path == f"/{alias}/products" and method == "GET":
+            return get_products_by_user_id(user_id=user_id)
+        if path == f"/{alias}/products" and method == "POST":
+            return create_product(event=event, user_name=user_name, user_id=user_id)
+        if path == f"/{alias}/products/delete/image" and method == "DELETE":
+            return delete_product_image(event=event)
+
+        if "/products/dropdown/" in path:
+            match_dropdown = re.fullmatch(rf"/{alias}/products/dropdown/([^/]+)", path)
             if match_dropdown:
                 business_id = match_dropdown.group(1)
-                if method == 'GET':
+                if method == "GET":
                     return get_product_dropdown(business_id=business_id)
+
+        if "/products/n8n" in path and method == "GET":
             
-
-            match = re.fullmatch(rf'/{alias}/products/([^/]+)', path)
+            match = re.fullmatch(rf"/{alias}/products/n8n/([^/]+)", path)
             if match:
-                product_id = match.group(1)
-                if method == 'PUT':
-                    return update_product(event=event, user_name=user_name, product_id=product_id, user_id=user_id)
-                if method == 'GET':
-                    return get_products_by_business_id(business_id=product_id)
-                if method == 'DELETE':
-                    return delete_product(product_id)
+                business_id = match.group(1)
 
-            return {
-                'statusCode': 404,
-                'body': 'Ruta no encontrada'
-            }
+                return get_products_by_business_id(business_id=business_id)
+
+        match = re.fullmatch(rf"/{alias}/products/([^/]+)", path)
+        if match:
+            product_id = match.group(1)
+            if method == "PUT":
+                return update_product(
+                    event=event,
+                    user_name=user_name,
+                    product_id=product_id,
+                    user_id=user_id,
+                )
+            if method == "GET":
+                return get_products_by_business_id(business_id=product_id)
+            if method == "DELETE":
+                return delete_product(product_id)
+
+        return {"statusCode": 404, "body": "Ruta no encontrada"}
     except Exception as e:
         print(json.dumps({"event": "products_routes", "Error": str(e)}))
         return {
-            'statusCode': 500,
-            'headers': {'Access-Control-Allow-Origin': '*'},
-            'body': json.dumps({'message': str(e)})
+            "statusCode": 500,
+            "headers": {"Access-Control-Allow-Origin": "*"},
+            "body": json.dumps({"message": str(e)}),
         }
 
 
@@ -61,54 +71,71 @@ def get_products_by_user_id(user_id: str):
     Retrieve all products from the database.
     """
     try:
-        response = products_table.scan(
-            FilterExpression=Attr('user_id').eq(user_id)
-        )
+        response = products_table.scan(FilterExpression=Attr("user_id").eq(user_id))
         products = []
         for item in response.get("Items", []):
 
             images = []
             imagesUrl = item.get("imagesUrl", [])
             for image in imagesUrl:
-                images.append({
-                    "image": image
-                })
+                images.append({"image": image})
 
-            products.append({
-                "product_id": item.get("product_id", ""),
-                "business_id": item.get("business_id", ""),
-                "name": item.get("product_name", ""),
-                "description": item.get("description", ""),
-                "price": Decimal(item.get("price", 0.0)),
-                "quantity": int(item.get("quantity", 0)),
-                "orden": int(item.get("orden", 0)),
-                "just_one": bool(item.get("just_one", False) if item.get("just_one", False) in [True, 'true', 'True', 1, '1'] else False),
-                "show_quantity": bool(item.get("show_quantity", False) if item.get("show_quantity", False) in [True, 'true', 'True', 1, '1'] else False),
-                "terms": item.get("terms", ""),
-                "min_age_allow": bool(item.get("min_age_allow", False) if item.get("min_age_allow", False) in [True, 'true', 'True', 1, '1'] else False),
-                "min_age": int(item.get("min_age", 0)),
-                "currency": item.get("currency", ""),
-                "imagesUrl": images,
-                "category_id": item.get("category_id", ""),
-                "is_available": item.get("is_available", "unavailable"),
-                "required_delivery_day": bool(item.get("required_delivery_day", False) if item.get("required_delivery_day", False) in [True, 'true', 'True', 1, '1'] else False),
-                "delivery_start_day": item.get("delivery_start_day", ""),
-            })
+            products.append(
+                {
+                    "product_id": item.get("product_id", ""),
+                    "business_id": item.get("business_id", ""),
+                    "name": item.get("product_name", ""),
+                    "description": item.get("description", ""),
+                    "price": Decimal(item.get("price", 0.0)),
+                    "quantity": int(item.get("quantity", 0)),
+                    "orden": int(item.get("orden", 0)),
+                    "just_one": bool(
+                        item.get("just_one", False)
+                        if item.get("just_one", False) in [True, "true", "True", 1, "1"]
+                        else False
+                    ),
+                    "show_quantity": bool(
+                        item.get("show_quantity", False)
+                        if item.get("show_quantity", False)
+                        in [True, "true", "True", 1, "1"]
+                        else False
+                    ),
+                    "terms": item.get("terms", ""),
+                    "min_age_allow": bool(
+                        item.get("min_age_allow", False)
+                        if item.get("min_age_allow", False)
+                        in [True, "true", "True", 1, "1"]
+                        else False
+                    ),
+                    "min_age": int(item.get("min_age", 0)),
+                    "currency": item.get("currency", ""),
+                    "imagesUrl": images,
+                    "category_id": item.get("category_id", ""),
+                    "is_available": item.get("is_available", "unavailable"),
+                    "required_delivery_day": bool(
+                        item.get("required_delivery_day", False)
+                        if item.get("required_delivery_day", False)
+                        in [True, "true", "True", 1, "1"]
+                        else False
+                    ),
+                    "delivery_start_day": item.get("delivery_start_day", ""),
+                }
+            )
         return {
-            'statusCode': 200,  # No uses 204
-            'headers': {
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Headers': '*',
-                'Access-Control-Allow-Methods': '*'
+            "statusCode": 200,  # No uses 204
+            "headers": {
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Headers": "*",
+                "Access-Control-Allow-Methods": "*",
             },
-            'body': json.dumps(products, default=str)
+            "body": json.dumps(products, default=str),
         }
     except Exception as e:
         print(json.dumps({"event": "get_products", "Error": str(e)}))
         return {
-            'statusCode': 500,
-            'headers': {'Access-Control-Allow-Origin': '*'},
-            'body': json.dumps({'message': str(e)})
+            "statusCode": 500,
+            "headers": {"Access-Control-Allow-Origin": "*"},
+            "body": json.dumps({"message": str(e)}),
         }
 
 
@@ -118,7 +145,7 @@ def get_products_by_business_id(business_id: str):
     """
     try:
         response = products_table.scan(
-            FilterExpression=Attr('business_id').eq(business_id)
+            FilterExpression=Attr("business_id").eq(business_id)
         )
         products = []
         for item in response.get("Items", []):
@@ -126,45 +153,65 @@ def get_products_by_business_id(business_id: str):
             images = []
             imagesUrl = item.get("imagesUrl", [])
             for image in imagesUrl:
-                images.append({
-                    "image": image
-                })
+                images.append({"image": image})
 
-            products.append({
-                "product_id": item.get("product_id", ""),
-                "business_id": item.get("business_id", ""),
-                "name": item.get("product_name", ""),
-                "description": item.get("description", ""),
-                "price": Decimal(item.get("price", 0.0)),
-                "quantity": int(item.get("quantity", 0)),
-                "orden": int(item.get("orden", 0)),
-                "just_one": bool(item.get("just_one", False) if item.get("just_one", False) in [True, 'true', 'True', 1, '1'] else False),
-                "show_quantity": bool(item.get("show_quantity", False) if item.get("show_quantity", False) in [True, 'true', 'True', 1, '1'] else False),
-                "terms": item.get("terms", ""),
-                "min_age_allow": bool(item.get("min_age_allow", False) if item.get("min_age_allow", False) in [True, 'true', 'True', 1, '1'] else False),
-                "min_age": int(item.get("min_age", 0)),
-                "currency": item.get("currency", ""),
-                "imagesUrl": images,
-                "category_id": item.get("category_id", ""),
-                "is_available": item.get("is_available", "unavailable"),
-                "required_delivery_day": bool(item.get("required_delivery_day", False) if item.get("required_delivery_day", False) in [True, 'true', 'True', 1, '1'] else False),
-                "delivery_start_day": item.get("delivery_start_day", ""),
-            })
+            products.append(
+                {
+                    "product_id": item.get("product_id", ""),
+                    "business_id": item.get("business_id", ""),
+                    "name": item.get("product_name", ""),
+                    "description": item.get("description", ""),
+                    "price": Decimal(item.get("price", 0.0)),
+                    "quantity": int(item.get("quantity", 0)),
+                    "orden": int(item.get("orden", 0)),
+                    "just_one": bool(
+                        item.get("just_one", False)
+                        if item.get("just_one", False) in [True, "true", "True", 1, "1"]
+                        else False
+                    ),
+                    "show_quantity": bool(
+                        item.get("show_quantity", False)
+                        if item.get("show_quantity", False)
+                        in [True, "true", "True", 1, "1"]
+                        else False
+                    ),
+                    "terms": item.get("terms", ""),
+                    "min_age_allow": bool(
+                        item.get("min_age_allow", False)
+                        if item.get("min_age_allow", False)
+                        in [True, "true", "True", 1, "1"]
+                        else False
+                    ),
+                    "min_age": int(item.get("min_age", 0)),
+                    "currency": item.get("currency", ""),
+                    "imagesUrl": images,
+                    "category_id": item.get("category_id", ""),
+                    "is_available": item.get("is_available", "unavailable"),
+                    "required_delivery_day": bool(
+                        item.get("required_delivery_day", False)
+                        if item.get("required_delivery_day", False)
+                        in [True, "true", "True", 1, "1"]
+                        else False
+                    ),
+                    "delivery_start_day": item.get("delivery_start_day", ""),
+                    "place": item.get("place", ""),
+                }
+            )
         return {
-            'statusCode': 200,  # No uses 204
-            'headers': {
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Headers': '*',
-                'Access-Control-Allow-Methods': '*'
+            "statusCode": 200,  # No uses 204
+            "headers": {
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Headers": "*",
+                "Access-Control-Allow-Methods": "*",
             },
-            'body': json.dumps(products, default=str)
+            "body": json.dumps(products, default=str),
         }
     except Exception as e:
         print(json.dumps({"event": "get_products", "Error": str(e)}))
         return {
-            'statusCode': 500,
-            'headers': {'Access-Control-Allow-Origin': '*'},
-            'body': json.dumps({'message': str(e)})
+            "statusCode": 500,
+            "headers": {"Access-Control-Allow-Origin": "*"},
+            "body": json.dumps({"message": str(e)}),
         }
 
 
@@ -177,31 +224,34 @@ def create_product(event, user_name, user_id):
         # Paso 1: Decodificar el body de base64
         body_bytes = base64.b64decode(event["body"])
         # Paso 2: Obtener content-type (con boundary)
-        content_type = event["headers"].get(
-            "content-type") or event["headers"].get("Content-Type")
+        content_type = event["headers"].get("content-type") or event["headers"].get(
+            "Content-Type"
+        )
         # Paso 3: Parsear multipart
         multipart_data = decoder.MultipartDecoder(body_bytes, content_type)
         file_infos = []  # Para múltiples archivos
         product_create = {}
 
         for part in multipart_data.parts:
-            headers = part.headers[b'Content-Disposition'].decode()
+            headers = part.headers[b"Content-Disposition"].decode()
             name = headers.split('name="')[1].split('"')[0]
 
             if "filename=" in headers:
-                original_filename = headers.split(
-                    'filename="')[1].split('"')[0]
+                original_filename = headers.split('filename="')[1].split('"')[0]
                 if original_filename and len(part.content) > 0:
                     extension = os.path.splitext(original_filename)[1].lower()
                     part_content_type = part.headers.get(
-                        b"Content-Type", b"application/octet-stream").decode()
-                    file_infos.append({
-                        "field_name": name,
-                        "original_filename": original_filename,
-                        "content": part.content,
-                        "extension": extension,
-                        "content_type": part_content_type
-                    })
+                        b"Content-Type", b"application/octet-stream"
+                    ).decode()
+                    file_infos.append(
+                        {
+                            "field_name": name,
+                            "original_filename": original_filename,
+                            "content": part.content,
+                            "extension": extension,
+                            "content_type": part_content_type,
+                        }
+                    )
             else:
                 product_create[name] = part.text
 
@@ -210,9 +260,15 @@ def create_product(event, user_name, user_id):
         if file_infos:
             images = []
             for file_info in file_infos:
-                images.append(upload_image(
-                    file_info=file_info, user_id=user_id, type_file=str(uuid.uuid4()), product_id=product_id))
-            product_create['imagesUrl'] = images if images else []
+                images.append(
+                    upload_image(
+                        file_info=file_info,
+                        user_id=user_id,
+                        type_file=str(uuid.uuid4()),
+                        product_id=product_id,
+                    )
+                )
+            product_create["imagesUrl"] = images if images else []
 
         products_table.put_item(
             Item={
@@ -232,26 +288,28 @@ def create_product(event, user_name, user_id):
                 "is_available": product_create.get("is_available", "unavailable"),
                 "min_age_allow": product_create.get("min_age_allow", False),
                 "min_age": int(product_create.get("min_age", 0)),
-                "required_delivery_day": product_create.get("required_delivery_day", False),
+                "required_delivery_day": product_create.get(
+                    "required_delivery_day", False
+                ),
                 "delivery_start_day": product_create.get("delivery_start_day", ""),
                 "user_id": user_id,
                 "create_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "create_user": user_name,
                 "update_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "update_user": user_name
+                "update_user": user_name,
             }
         )
         return {
-            'statusCode': 200,
-            'headers': {'Access-Control-Allow-Origin': '*'},
-            'body': json.dumps({'message': 'Categoría creada correctamente'})
+            "statusCode": 200,
+            "headers": {"Access-Control-Allow-Origin": "*"},
+            "body": json.dumps({"message": "Categoría creada correctamente"}),
         }
     except Exception as e:
         print(json.dumps({"event": "create_product", "Error": str(e)}))
         return {
-            'statusCode': 500,
-            'headers': {'Access-Control-Allow-Origin': '*'},
-            'body': json.dumps({'message': str(e)})
+            "statusCode": 500,
+            "headers": {"Access-Control-Allow-Origin": "*"},
+            "body": json.dumps({"message": str(e)}),
         }
 
 
@@ -263,31 +321,34 @@ def update_product(event, user_name, product_id, user_id):
         # Paso 1: Decodificar el body de base64
         body_bytes = base64.b64decode(event["body"])
         # Paso 2: Obtener content-type (con boundary)
-        content_type = event["headers"].get(
-            "content-type") or event["headers"].get("Content-Type")
+        content_type = event["headers"].get("content-type") or event["headers"].get(
+            "Content-Type"
+        )
         # Paso 3: Parsear multipart
         multipart_data = decoder.MultipartDecoder(body_bytes, content_type)
         file_infos = []  # Para múltiples archivos
         product_update = {}
 
         for part in multipart_data.parts:
-            headers = part.headers[b'Content-Disposition'].decode()
+            headers = part.headers[b"Content-Disposition"].decode()
             name = headers.split('name="')[1].split('"')[0]
 
             if "filename=" in headers:
-                original_filename = headers.split(
-                    'filename="')[1].split('"')[0]
+                original_filename = headers.split('filename="')[1].split('"')[0]
                 if original_filename and len(part.content) > 0:
                     extension = os.path.splitext(original_filename)[1].lower()
                     part_content_type = part.headers.get(
-                        b"Content-Type", b"application/octet-stream").decode()
-                    file_infos.append({
-                        "field_name": name,
-                        "original_filename": original_filename,
-                        "content": part.content,
-                        "extension": extension,
-                        "content_type": part_content_type
-                    })
+                        b"Content-Type", b"application/octet-stream"
+                    ).decode()
+                    file_infos.append(
+                        {
+                            "field_name": name,
+                            "original_filename": original_filename,
+                            "content": part.content,
+                            "extension": extension,
+                            "content_type": part_content_type,
+                        }
+                    )
             else:
                 product_update[name] = part.text
 
@@ -301,55 +362,63 @@ def update_product(event, user_name, product_id, user_id):
 
         if file_infos:
             for file_info in file_infos:
-                images.append(upload_image(
-                    file_info=file_info, user_id=user_id, type_file=str(uuid.uuid4()), product_id=product_id))
+                images.append(
+                    upload_image(
+                        file_info=file_info,
+                        user_id=user_id,
+                        type_file=str(uuid.uuid4()),
+                        product_id=product_id,
+                    )
+                )
 
         products_table.update_item(
             Key={"product_id": product_id},
             UpdateExpression="SET product_name = :product_name, description = :description, price = :price, quantity = :quantity, orden = :orden, just_one = :just_one, show_quantity = :show_quantity, terms = :terms, min_age_allow = :min_age_allow, min_age = :min_age, required_delivery_day = :required_delivery_day, delivery_start_day = :delivery_start_day, currency = :currency, imagesUrl = :imagesUrl, category_id = :category_id, is_available = :is_available, user_id = :user_id, update_date = :update_date, update_user = :update_user",
             ExpressionAttributeValues={
-                ':description': product_update.get('description', ''),
-                ':product_name': product_update.get('name', ''),
-                ':price': product_update.get('price', 0.0),
-                ':quantity': product_update.get('quantity', 0),
-                ':orden': product_update.get('orden', 0),
-                ':just_one': product_update.get('just_one', False),
-                ':show_quantity': product_update.get('show_quantity', False),
-                ':terms': product_update.get('terms', ''),
-                ':min_age_allow': product_update.get('min_age_allow', False),
-                ':min_age': int(product_update.get('min_age', 0)),
-                ':currency': product_update.get('currency', ''),
-                ':imagesUrl': images,
-                ':category_id': product_update.get('category_id', ''),
-                ':is_available': product_update.get('is_available', 'unavailable'),
-                ':required_delivery_day': product_update.get('required_delivery_day', False),
-                ':delivery_start_day': product_update.get('delivery_start_day', ''),
-                ':user_id': user_id,
-                ':update_date': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                ':update_user': user_name
+                ":description": product_update.get("description", ""),
+                ":product_name": product_update.get("name", ""),
+                ":price": product_update.get("price", 0.0),
+                ":quantity": product_update.get("quantity", 0),
+                ":orden": product_update.get("orden", 0),
+                ":just_one": product_update.get("just_one", False),
+                ":show_quantity": product_update.get("show_quantity", False),
+                ":terms": product_update.get("terms", ""),
+                ":min_age_allow": product_update.get("min_age_allow", False),
+                ":min_age": int(product_update.get("min_age", 0)),
+                ":currency": product_update.get("currency", ""),
+                ":imagesUrl": images,
+                ":category_id": product_update.get("category_id", ""),
+                ":is_available": product_update.get("is_available", "unavailable"),
+                ":required_delivery_day": product_update.get(
+                    "required_delivery_day", False
+                ),
+                ":delivery_start_day": product_update.get("delivery_start_day", ""),
+                ":user_id": user_id,
+                ":update_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                ":update_user": user_name,
             },
-            ReturnValues="UPDATED_NEW"
+            ReturnValues="UPDATED_NEW",
         )
         return {
-            'statusCode': 200,
-            'headers': {'Access-Control-Allow-Origin': '*'},
-            'body': json.dumps({'message': 'Categoría actualizada correctamente'})
+            "statusCode": 200,
+            "headers": {"Access-Control-Allow-Origin": "*"},
+            "body": json.dumps({"message": "Categoría actualizada correctamente"}),
         }
 
     except Exception as e:
         print(json.dumps({"event": "create_member", "Error": str(e)}))
         return {
-            'statusCode': 500,
-            'headers': {'Access-Control-Allow-Origin': '*'},
-            'body': json.dumps({'message': str(e)})
+            "statusCode": 500,
+            "headers": {"Access-Control-Allow-Origin": "*"},
+            "body": json.dumps({"message": str(e)}),
         }
 
 
 def delete_product_image(event):
     try:
-        body = json.loads(event.get('body', '{}'))
-        file_url = body.get('file_url', '')
-        product_id = body.get('product_id', '')
+        body = json.loads(event.get("body", "{}"))
+        file_url = body.get("file_url", "")
+        product_id = body.get("product_id", "")
 
         response = products_table.get_item(Key={"product_id": product_id})
 
@@ -360,25 +429,24 @@ def delete_product_image(event):
                 products_table.update_item(
                     Key={"product_id": product_id},
                     UpdateExpression="SET imagesUrl = :imagesUrl",
-                    ExpressionAttributeValues={
-                        ':imagesUrl': item["imagesUrl"]
-                    },
-                    ReturnValues="UPDATED_NEW"
+                    ExpressionAttributeValues={":imagesUrl": item["imagesUrl"]},
+                    ReturnValues="UPDATED_NEW",
                 )
 
         delete_image(file_url)
         return {
-            'statusCode': 200,
-            'headers': {'Access-Control-Allow-Origin': '*'},
-            'body': json.dumps({'message': 'Imagen eliminada correctamente'})
+            "statusCode": 200,
+            "headers": {"Access-Control-Allow-Origin": "*"},
+            "body": json.dumps({"message": "Imagen eliminada correctamente"}),
         }
     except Exception as e:
         print(json.dumps({"event": "delete_product_image", "Error": str(e)}))
         return {
-            'statusCode': 500,
-            'headers': {'Access-Control-Allow-Origin': '*'},
-            'body': json.dumps({'message': str(e)})
+            "statusCode": 500,
+            "headers": {"Access-Control-Allow-Origin": "*"},
+            "body": json.dumps({"message": str(e)}),
         }
+
 
 def get_product_dropdown(business_id: str):
     """
@@ -386,34 +454,38 @@ def get_product_dropdown(business_id: str):
     """
     try:
         response = products_table.scan(
-            FilterExpression=Attr('business_id').eq(business_id)
+            FilterExpression=Attr("business_id").eq(business_id)
         )
         products = []
         for item in response.get("Items", []):
-            products.append({
-                "code": item.get("product_id", ""),
-                "name": item.get("product_name", ""),
-                "price": Decimal(item.get("price", 0.0))
-            })
-        sorted_products = sorted(products, key=lambda x: x['name'])
+            products.append(
+                {
+                    "code": item.get("product_id", ""),
+                    "name": item.get("product_name", ""),
+                    "price": Decimal(item.get("price", 0.0)),
+                }
+            )
+        sorted_products = sorted(products, key=lambda x: x["name"])
         return {
-            'statusCode': 200,
-            'headers': {
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Headers': '*',
-                'Access-Control-Allow-Methods': '*'
+            "statusCode": 200,
+            "headers": {
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Headers": "*",
+                "Access-Control-Allow-Methods": "*",
             },
-            'body': json.dumps(sorted_products, default=str)
+            "body": json.dumps(sorted_products, default=str),
         }
     except Exception as e:
         print(json.dumps({"event": "get_product_dropdown", "Error": str(e)}))
         return {
-            'statusCode': 500,
-            'headers': {'Access-Control-Allow-Origin': '*'},
-            'body': json.dumps({'message': str(e)})
+            "statusCode": 500,
+            "headers": {"Access-Control-Allow-Origin": "*"},
+            "body": json.dumps({"message": str(e)}),
         }
 
+
 # Helpers
+
 
 def delete_product(product_id: str):
     """
@@ -430,54 +502,62 @@ def delete_product(product_id: str):
 
         products_table.delete_item(Key={"product_id": product_id})
         return {
-            'statusCode': 200,
-            'headers': {'Access-Control-Allow-Origin': '*'},
-            'body': json.dumps({'message': 'Categoría eliminada correctamente'})
+            "statusCode": 200,
+            "headers": {"Access-Control-Allow-Origin": "*"},
+            "body": json.dumps({"message": "Categoría eliminada correctamente"}),
         }
     except Exception as e:
         print(json.dumps({"event": "delete_product", "Error": str(e)}))
         return {
-            'statusCode': 500,
-            'headers': {'Access-Control-Allow-Origin': '*'},
-            'body': json.dumps({'message': str(e)})
+            "statusCode": 500,
+            "headers": {"Access-Control-Allow-Origin": "*"},
+            "body": json.dumps({"message": str(e)}),
         }
 
 
 def delete_image(file_url):
     try:
-        file_name = file_url.split(
-            'https://qatalo.s3.us-east-1.amazonaws.com/')[1]
-        s3.delete_object(Bucket=os.getenv('BUCKET_NAME'), Key=file_name)
+        file_name = file_url.split("https://qatalo.s3.us-east-1.amazonaws.com/")[1]
+        s3.delete_object(Bucket=os.getenv("BUCKET_NAME"), Key=file_name)
         return True
     except Exception as e:
-        print(json.dumps({
-            "event": "delete_image",
-            "error": str(e),
-            "trace": traceback.format_exc()
-        }))
+        print(
+            json.dumps(
+                {
+                    "event": "delete_image",
+                    "error": str(e),
+                    "trace": traceback.format_exc(),
+                }
+            )
+        )
         return False
 
 
 def upload_image(file_info, user_id=None, type_file="image", product_id=None):
     try:
-        file_name = f"business/products/{product_id}_{type_file}{file_info['extension']}"
+        file_name = (
+            f"business/products/{product_id}_{type_file}{file_info['extension']}"
+        )
         file_url = f"https://{os.getenv('BUCKET_NAME')}.s3.{os.getenv('AWS_REGION')}.amazonaws.com/{file_name}"
         with io.BytesIO(file_info["content"]) as fileobj:
             s3.upload_fileobj(
                 Fileobj=fileobj,
-                Bucket=os.getenv('BUCKET_NAME'),
+                Bucket=os.getenv("BUCKET_NAME"),
                 Key=file_name,
-                ExtraArgs={"ContentType": file_info['content_type']}
+                ExtraArgs={"ContentType": file_info["content_type"]},
             )
 
             # para no incluir binario en la respuesta
         del file_info["content"]
         return file_url
     except Exception as e:
-        print(json.dumps({
-            "event": "upload_image",
-            "error": str(e),
-            "trace": traceback.format_exc()
-        }))
+        print(
+            json.dumps(
+                {
+                    "event": "upload_image",
+                    "error": str(e),
+                    "trace": traceback.format_exc(),
+                }
+            )
+        )
         return None
-

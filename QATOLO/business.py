@@ -22,6 +22,9 @@ s3 = boto3.client('s3')
 def business_routes(path, method, event, user_name, user_id, alias):
     if path == f'/{alias}/businesses' and method == 'POST':
         return create_business(event=event, user_name=user_name, user_id=user_id)
+    
+    if path == f'/{alias}/businesses/app' and method == 'POST':
+        return create_business_app(event=event, user_name=user_name, user_id=user_id)
 
     if path == f'/{alias}/businesses' and method == 'GET':
         return get_business(user_id=user_id)
@@ -55,7 +58,9 @@ def get_business(user_id: str):
                 "description": response["Items"][0]["business_description"],
                 "slug": response["Items"][0]["business_slug"],
                 "phone": response["Items"][0]["business_phone"],
-                "logo_url": response["Items"][0]["business_logo_url"]
+                "logo_url": response["Items"][0]["business_logo_url"],
+                "logo_content_type":"",
+                "logo_extension":""
             }
 
             return {
@@ -64,7 +69,10 @@ def get_business(user_id: str):
                 'body': json.dumps(business, default=str)
             }
         else:
-            return None
+            return {
+                'statusCode': 404,
+                'headers': {'Access-Control-Allow-Origin': '*'}
+            }
     except Exception as e:
         print(json.dumps({"event": "get_business", "Error": str(e)}))
         return {
@@ -205,6 +213,64 @@ def create_business(event, user_name, user_id):
         }
 
 
+def create_business_app(event, user_name, user_id):
+    """
+    Create a new business.
+    """
+    try:
+
+        business_create = json.loads(event['body'])
+
+        slug = business_create.get('slug', '')
+
+        response = business_table.scan(
+            FilterExpression=Attr('business_slug').eq(slug)
+        )
+
+        if response.get('Items'):
+            return {
+                'statusCode': 400,
+                'headers': {'Access-Control-Allow-Origin': '*'},
+                'body': json.dumps({'message': 'El slug ya existe'})
+            }
+
+        business_id = str(uuid.uuid4())
+        
+        data = Presign_image_response(user_id=user_id, type_file="logo", extension=business_create.get('logo_extension', '.png'),
+                                       expires=3600, content_type=business_create.get('logo_content_type', 'image/png'))
+
+        business_table.put_item(
+            Item={
+                "business_id": business_id,
+                "user_id": user_id,
+                "business_name": business_create.get('name', ''),
+                "business_description": business_create.get('description', ''),
+                "business_slug": business_create.get('slug', ''),
+                "business_phone": business_create.get('phone', ''),
+                "business_logo_url": data.get('publicUrl', ''),
+                "create_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "create_user": user_name,
+                "update_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "update_user": user_name
+            }
+        )
+        data = Presign_image_response(user_id=user_id, type_file="logo", extension=business_create.get('logo_extension', '.png'),
+                                       expires=3600, content_type=business_create.get('logo_content_type', 'image/png'))
+
+        return {
+            'statusCode': 200,
+            'headers': {'Access-Control-Allow-Origin': '*'},
+            'body': json.dumps(data)
+        }
+    except Exception as e:
+        print(json.dumps({"event": "create_business", "Error": str(e)}))
+        return {
+            'statusCode': 500,
+            'headers': {'Access-Control-Allow-Origin': '*'},
+            'body': json.dumps({'message': str(e)})
+        }
+
+
 def update_business(event, user_name, business_id, user_id):
     """
     Update an existing user.
@@ -259,7 +325,7 @@ def update_business(event, user_name, business_id, user_id):
                 if file_info['field_name'] == 'logo':
                     business_update['logo_url'] = upload_image(
                         file_info=file_info, user_id=user_id, type_file="logo")
-                    
+
         if 'logo_url' in business_update and business_update['logo_url'] is None:
             delete_image(file_url=response['logo_url'])
 
@@ -314,11 +380,41 @@ def upload_image(file_info, user_id=None, type_file="logo"):
             "trace": traceback.format_exc()
         }))
         return None
-    
+
+
+def Presign_image_response(user_id=None, type_file="logo", extension=".png", expires=3600, content_type="image/png"):
+    try:
+        key = f"business/{user_id}_{type_file}{extension}"
+        publicUrl = f"https://{os.getenv('BUCKET_NAME')}.s3.{os.getenv('AWS_REGION')}.amazonaws.com/{key}"
+
+        uploadUrl = s3.generate_presigned_url(
+            ClientMethod="put_object",
+            Params={
+                "Bucket": os.getenv('BUCKET_NAME'),
+                "Key": key,
+                "ContentType": content_type,
+            },
+            ExpiresIn=expires,
+        )
+
+        return {
+            "uploadUrl": uploadUrl,
+            "publicUrl": publicUrl,
+            "key": key
+        }
+    except Exception as e:
+        print(json.dumps({
+            "event": "upload_image",
+            "error": str(e),
+            "trace": traceback.format_exc()
+        }))
+        return None
+
 
 def delete_image(file_url):
     try:
-        file_name = file_url.split('https://qatalo.s3.us-east-1.amazonaws.com/')[1]
+        file_name = file_url.split(
+            'https://qatalo.s3.us-east-1.amazonaws.com/')[1]
         s3.delete_object(Bucket=os.getenv('BUCKET_NAME'), Key=file_name)
         return True
     except Exception as e:

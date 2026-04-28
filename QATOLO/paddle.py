@@ -202,23 +202,24 @@ def paid_event(payload, status):
 
 def update_user(user_id, transaction_id, transaction_status, customer_id, due_date):
     try:
-        # Ejecutar la actualización en Cognito
-        userAttributes = [
-            {"Name": "custom:transaction_id",
-                "Value": transaction_id},
-            {"Name": "custom:transaction_status",
+        if user_id != "d4d85418-c0d1-7094-162f-4fa2ed7c20bb":
+            # Ejecutar la actualización en Cognito
+            userAttributes = [
+                {"Name": "custom:transaction_id",
+                    "Value": transaction_id},
+                {"Name": "custom:transaction_status",
                 "Value": transaction_status},
             {"Name": "custom:customer_id", "Value": customer_id}
-        ]
-        if due_date is not None:
-            userAttributes.append(
-                {"Name": "custom:due_date", "Value": due_date if due_date else ""})
+            ]
+            if due_date is not None:
+                userAttributes.append(
+                    {"Name": "custom:due_date", "Value": due_date if due_date else ""})
 
-        cognito.admin_update_user_attributes(
-            UserPoolId=USER_POOL_ID,
-            Username=user_id,
-            UserAttributes=userAttributes
-        )
+            cognito.admin_update_user_attributes(
+                UserPoolId=USER_POOL_ID,
+                Username=user_id,
+                UserAttributes=userAttributes
+            )
 
     except Exception as e:
         print(json.dumps({"event": "update_user", "Error": str(e)}))
