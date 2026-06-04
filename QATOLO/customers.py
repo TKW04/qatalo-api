@@ -16,6 +16,7 @@ import json
 import os
 import uuid
 
+# pyrefly: ignore [missing-import]
 from requests_toolbelt.multipart import decoder
 from boto3.dynamodb.conditions import Attr
 from datetime import datetime
@@ -28,1454 +29,679 @@ business_table = dynamodb.Table("qatalo.business")
 payment_methods_table = dynamodb.Table("qatalo.payment_methods")
 products_table = dynamodb.Table("qatalo.products")
 USER_POOL_ID = os.environ.get("USER_POOL_ID")
-
 s3 = boto3.client("s3")
 FRONT_END_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")
 
+CORS = {"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "*", "Access-Control-Allow-Methods": "*"}
+DATE_FMT = "%Y-%m-%d %H:%M:%S"
 
+
+# ----------------- Helpers -----------------
+def _resp(status, body=None):
+    out = {"statusCode": status, "headers": CORS}
+    if body is not None:
+        out["body"] = json.dumps(body, default=str)
+    return out
+
+
+def _now():
+    return datetime.now().strftime(DATE_FMT)
+
+
+def _get_customer(customer_id):
+    return customers_table.get_item(Key={"customer_id": customer_id}).get("Item")
+
+
+def _get_business(business_id):
+    return business_table.get_item(Key={"business_id": business_id}).get("Item")
+
+
+def _find_transaction(transactions, transaction_id):
+    return next((t for t in transactions if t.get("transaction_id", "") == transaction_id), None)
+
+
+def _save_transactions(customer_id, transactions, email):
+    customers_table.update_item(
+        Key={"customer_id": customer_id},
+        UpdateExpression="SET transactions = :t, update_date = :ud, update_user = :uu",
+        ExpressionAttributeValues={":t": transactions, ":ud": _now(), ":uu": email},
+        ReturnValues="UPDATED_NEW",
+    )
+
+
+def _check_owner(customer, user_id):
+    """None si OK; response de error si no es dueño. user_id None = endpoint público."""
+    if user_id is None:
+        return None
+    business = _get_business(customer.get("business_id", ""))
+    if not business or business.get("user_id") != user_id:
+        return _resp(403, {"message": "No autorizado"})
+    return None
+
+
+def _owner_email(business):
+    try:
+        user = cognito.admin_get_user(UserPoolId=USER_POOL_ID, Username=business.get("user_id", ""))
+        return {a["Name"]: a["Value"] for a in user["UserAttributes"]}.get("email", "")
+    except Exception:
+        return ""
+
+
+def _catalog_url(business):
+    return f"{FRONT_END_URL}/catalog/{business.get('business_slug', '')}"
+
+
+def _adjust_stock(product_id, delta, updated_by):
+    """delta negativo descuenta, positivo restaura. Ignora si el producto no existe."""
+    if not product_id or delta == 0:
+        return
+    product = products_table.get_item(Key={"product_id": product_id}).get("Item")
+    if not product:
+        return
+    new_qty = int(product.get("quantity", 0)) + delta
+    if new_qty < 0:
+        new_qty = 0
+    products_table.update_item(
+        Key={"product_id": product_id},
+        UpdateExpression="SET quantity = :q, update_date = :ud, update_user = :uu",
+        ExpressionAttributeValues={":q": new_qty, ":ud": _now(), ":uu": updated_by},
+    )
+
+
+def _notify_n8n(customer_phone, transaction_id, status):
+    try:
+        requests.post(
+            url="https://n8n.qatalo.online/webhook/transactionStatus",
+            headers={"Content-Type": "application/json"},
+            json={"customer_id": customer_phone, "transaction_id": transaction_id, "transaction_status": status},
+            timeout=5,
+        )
+    except Exception as e:
+        print(json.dumps({"event": "notify_n8n", "Error": str(e)}))
+
+
+def _order_details(business, transaction, owner_email, customer_name="", **extra):
+    qty = int(transaction.get("quantity", 1) or 1)
+    price = Decimal(str(transaction.get("price", 0) or 0))
+    details = {
+        "business_name": business.get("business_name", "Qatalo"),
+        "business_logo_url": business.get("business_logo_url", ""),
+        "transaction_id": transaction.get("transaction_id", ""),
+        "order_date": transaction.get("create_date", _now()),
+        "product_name": transaction.get("product_name", ""),
+        "quantity": qty,
+        "total_amount": str(price * qty),
+        "currency": (transaction.get("payment_method", {}) or {}).get("currency", ""),
+        "business_email": owner_email or "Qatalo",
+        "business_phone": business.get("business_phone", "Qatalo"),
+        "customer_name": customer_name,
+    }
+    details.update(extra)
+    return details
+
+
+def _map_customer(item):
+    return {
+        "customer_id": item.get("customer_id", ""),
+        "business_id": item.get("business_id", ""),
+        "given_name": item.get("given_name", ""),
+        "family_name": item.get("family_name", ""),
+        "full_name": f"{item.get('given_name', '')} {item.get('family_name', '')}",
+        "email": item.get("email", ""),
+        "phone": item.get("phone", ""),
+        "age": int(item.get("age", 0)),
+        "delivery_day": item.get("delivery_day", ""),
+        "transactions": item.get("transactions", []),
+    }
+
+
+# ----------------- Router -----------------
 def customers_routes(path, method, event, user_name, user_id, alias):
-
-    if path == f"/{alias}/customers" and method == "GET":
-        return get_customers_by_user_id(user_id=user_id)
+    # Públicos (catálogo / cliente)
     if path == f"/{alias}/customers" and method == "POST":
         return create_customer(event=event)
     if path == f"/{alias}/customers/noTransaction" and method == "POST":
         return create_customer_without_transactions(event=event)
     if path == f"/{alias}/customers/transactions" and method == "POST":
         return upload_receipt(event=event)
-    # Start Transactions
-    if path == f"/{alias}/customers/transactions/update" and method == "PUT":
-        return update_transaction(event=event)
-    if path == f"/{alias}/customers/transactions/add" and method == "POST":
-        return add_transaction(event=event)
-    if path == f"/{alias}/customers/transactions/add/n8n" and method == "POST":
-        return add_transaction(event=event)
-    if path == f"/{alias}/customers/transactions/delete" and method == "DELETE":
-        return delete_transaction(event=event)
-    if path == f"/{alias}/customers/transactions/approve" and method == "POST":
-        return approve_transaction(event=event)
-    if path == f"/{alias}/customers/transactions/cancelAdmin" and method == "POST":
-        return cancel_transaction(event=event)
     if path == f"/{alias}/customers/transactions/cancel" and method == "POST":
-        return cancel_transaction(event=event)
-    if path == f"/{alias}/customers/transactions/delivered" and method == "POST":
-        return delivered_transaction(event=event)
-    # End Transactions
-    match = re.fullmatch(rf"/{alias}/customers/phone/([^/]+)", path)
-    if match:
-        phone = match.group(1).split("|")[0]
-        business_id = match.group(1).split("|")[1]
-        return get_customer_by_phone(phone=phone, business_id=business_id)
-
-    match = re.fullmatch(rf"/{alias}/customers/([^/]+)", path)
-    if match:
-        customer_id = match.group(1)
-        if method == "PUT":
-            return update_customer(
-                event=event,
-                user_name=user_name,
-                customer_id=customer_id,
-                user_id=user_id,
-            )
-        if method == "DELETE":
-            return delete_customer(customer_id)
-        if method == "GET":
-            return get_customer_transaction(customer_id=customer_id)
-
+        return cancel_transaction(event=event, user_id=None)
     # n8n
-
     if path == f"/{alias}/customers/n8n" and method == "POST":
-        return create_customer_without_transactions_n8n(event=event)
+        return create_customer_without_transactions(event=event)
     if path == f"/{alias}/customers/transactions/add/n8n" and method == "POST":
         return add_transaction_n8n(event=event)
     if path == f"/{alias}/customers/transactions/upload/n8n" and method == "POST":
         return upload_receipt(event=event)
-
     if "/customers/transactions/get/n8n" in path and method == "GET":
-        match = re.fullmatch(rf"/{alias}/customers/transactions/get/n8n/([^/]+)", path)
-        if match:
-            customer_id = match.group(1).split("|")[0]
-            transaction_id = match.group(1).split("|")[1]
-            return get_customer_transaction_n8n(
-                transaction_id=transaction_id, customer_id=customer_id
-            )
-    # End n8n
-    return {"statusCode": 404, "body": "Ruta no encontrado"}
+        m = re.fullmatch(rf"/{alias}/customers/transactions/get/n8n/([^/]+)", path)
+        if m:
+            cid, tid = m.group(1).split("|")[0], m.group(1).split("|")[1]
+            return get_customer_transaction_n8n(transaction_id=tid, customer_id=cid)
+
+    # Admin (requieren dueño)
+    if path == f"/{alias}/customers" and method == "GET":
+        return get_customers_by_user_id(user_id=user_id)
+    if path == f"/{alias}/customers/transactions/update" and method == "PUT":
+        return update_transaction(event=event, user_id=user_id)
+    if path == f"/{alias}/customers/transactions/add" and method == "POST":
+        return add_transaction(event=event, user_id=user_id)
+    if path == f"/{alias}/customers/transactions/delete" and method == "DELETE":
+        return delete_transaction(event=event, user_id=user_id)
+    if path == f"/{alias}/customers/transactions/approve" and method == "POST":
+        return approve_transaction(event=event, user_id=user_id)
+    if path == f"/{alias}/customers/transactions/cancelAdmin" and method == "POST":
+        return cancel_transaction(event=event, user_id=user_id)
+    if path == f"/{alias}/customers/transactions/delivered" and method == "POST":
+        return delivered_transaction(event=event, user_id=user_id)
+
+    m = re.fullmatch(rf"/{alias}/customers/phone/([^/]+)", path)
+    if m:
+        phone, business_id = m.group(1).split("|")[0], m.group(1).split("|")[1]
+        return get_customer_by_phone(phone=phone, business_id=business_id)
+
+    m = re.fullmatch(rf"/{alias}/customers/([^/]+)", path)
+    if m:
+        customer_id = m.group(1)
+        if method == "PUT":
+            return update_customer(event=event, user_name=user_name, customer_id=customer_id, user_id=user_id)
+        if method == "DELETE":
+            return delete_customer(customer_id=customer_id, user_id=user_id)
+        if method == "GET":
+            return get_customer_transaction(customer_id=customer_id)
+
+    return _resp(404, {"message": "Ruta no encontrada"})
 
 
-def get_customer_by_phone(phone: str, business_id: str):
-    """
-    Retrieve all customers from the database.
-    """
+# ----------------- Lectura -----------------
+def get_customers_by_user_id(user_id):
     try:
-        response = customers_table.scan(
-            FilterExpression=Attr("business_id").eq(business_id)
-        )
-        phone_number = (
-            phone.strip()
-            .replace(" ", "")
-            .replace("-", "")
-            .replace("+1", "")
-            .replace("(", "")
-            .replace(")", "")
-        )
-        if phone_number.startswith("1"):
-            phone_number = phone_number[1:]
-
-        customer = None
-        if "Items" in response and len(response["Items"]) > 0:
-            for item in response.get("Items", []):
-                if phone_number in item.get("phone", ""):
-                    customer = {
-                        "customer_id": item.get("customer_id", ""),
-                        "business_id": item.get("business_id", ""),
-                        "given_name": item.get("given_name", ""),
-                        "family_name": item.get("family_name", ""),
-                        "full_name": f"{item.get('given_name', '')} {item.get('family_name', '')}",
-                        "transactions": item.get("transactions", []),
-                        "email": item.get("email", ""),
-                        "phone": item.get("phone", ""),
-                        "age": int(item.get("age", 0)),
-                        "delivery_day": item.get("delivery_day", ""),
-                    }
-                    break
-        return {
-            "statusCode": 200,  # No uses 204
-            "headers": {
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Headers": "*",
-                "Access-Control-Allow-Methods": "*",
-            },
-            "body": json.dumps(customer, default=str),
-        }
-    except Exception as e:
-        print(json.dumps({"event": "get_customer_by_phone", "Error": str(e)}))
-        return {
-            "statusCode": 500,
-            "headers": {"Access-Control-Allow-Origin": "*"},
-            "body": json.dumps({"message": str(e)}),
-        }
-
-
-def get_customers_by_user_id(user_id: str):
-    """
-    Retrieve all customers from the database.
-    """
-    try:
-        business_response = business_table.scan(
-            FilterExpression=Attr("user_id").eq(user_id)
-        )
+        biz = business_table.scan(FilterExpression=Attr("user_id").eq(user_id)).get("Items", [])
         customers = []
-        if "Items" in business_response and len(business_response["Items"]) > 0:
-            business_id = business_response["Items"][0].get("business_id", "")
-            response = customers_table.scan(
-                FilterExpression=Attr("business_id").eq(business_id)
-            )
-
-            for item in response.get("Items", []):
-                customers.append(
-                    {
-                        "customer_id": item.get("customer_id", ""),
-                        "business_id": item.get("business_id", ""),
-                        "given_name": item.get("given_name", ""),
-                        "family_name": item.get("family_name", ""),
-                        "full_name": f"{item.get('given_name', '')} {item.get('family_name', '')}",
-                        "transactions": item.get("transactions", []),
-                        "email": item.get("email", ""),
-                        "phone": item.get("phone", ""),
-                        "age": int(item.get("age", 0)),
-                        "delivery_day": item.get("delivery_day", ""),
-                    }
-                )
-            sorted_customers = sorted(
-                customers, key=lambda x: x["full_name"], reverse=False
-            )
-            customers = sorted_customers
-        return {
-            "statusCode": 200,  # No uses 204
-            "headers": {
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Headers": "*",
-                "Access-Control-Allow-Methods": "*",
-            },
-            "body": json.dumps(customers, default=str),
-        }
+        if biz:
+            business_id = biz[0].get("business_id", "")
+            items = customers_table.scan(FilterExpression=Attr("business_id").eq(business_id)).get("Items", [])
+            customers = sorted([_map_customer(i) for i in items], key=lambda x: x["full_name"])
+        return _resp(200, customers)
     except Exception as e:
         print(json.dumps({"event": "get_customers", "Error": str(e)}))
-        return {
-            "statusCode": 500,
-            "headers": {"Access-Control-Allow-Origin": "*"},
-            "body": json.dumps({"message": str(e)}),
-        }
+        return _resp(500, {"message": str(e)})
 
 
-def get_customer_transaction(customer_id: str):
-    """
-    Retrieve a customer transaction by its ID.
-    """
+def get_customer_by_phone(phone, business_id):
     try:
-        response = customers_table.get_item(Key={"customer_id": customer_id})
-        if "Item" in response:
-            item = response["Item"]
-            business = business_table.get_item(
-                Key={"business_id": item.get("business_id", "")}
-            )
+        items = customers_table.scan(FilterExpression=Attr("business_id").eq(business_id)).get("Items", [])
+        p = phone.strip().replace(" ", "").replace("-", "").replace("+1", "").replace("(", "").replace(")", "")
+        if p.startswith("1"):
+            p = p[1:]
+        customer = None
+        for item in items:
+            if p in item.get("phone", ""):
+                customer = _map_customer(item)
+                break
+        return _resp(200, customer)
+    except Exception as e:
+        print(json.dumps({"event": "get_customer_by_phone", "Error": str(e)}))
+        return _resp(500, {"message": str(e)})
 
-            customer = {
-                "customer_id": item.get("customer_id", ""),
-                "business_id": item.get("business_id", ""),
-                "business_logo_url": business.get("Item", {}).get(
-                    "business_logo_url", ""
-                ),
-                "given_name": item.get("given_name", ""),
-                "family_name": item.get("family_name", ""),
-                "email": item.get("email", ""),
-                "phone": item.get("phone", ""),
-                "age": int(item.get("age", 0)),
-                "delivery_day": item.get("delivery_day", ""),
-                "transactions": item.get("transactions", []),
-            }
-            if customer and "transactions" in customer:
-                return {
-                    "statusCode": 200,
-                    "headers": {"Access-Control-Allow-Origin": "*"},
-                    "body": json.dumps(customer, default=str),
-                }
-            else:
-                return {
-                    "statusCode": 404,
-                    "headers": {"Access-Control-Allow-Origin": "*"},
-                    "body": json.dumps({"message": "Transacción no encontrada"}),
-                }
-        else:
-            return {
-                "statusCode": 404,
-                "headers": {"Access-Control-Allow-Origin": "*"},
-                "body": json.dumps({"message": "Cliente no encontrado"}),
-            }
+
+def get_customer_transaction(customer_id):
+    try:
+        item = _get_customer(customer_id)
+        if not item:
+            return _resp(404, {"message": "Cliente no encontrado"})
+        business = _get_business(item.get("business_id", "")) or {}
+        customer = _map_customer(item)
+        customer["business_logo_url"] = business.get("business_logo_url", "")
+        return _resp(200, customer)
     except Exception as e:
         print(json.dumps({"event": "get_customer_transaction", "Error": str(e)}))
-        return {
-            "statusCode": 500,
-            "headers": {"Access-Control-Allow-Origin": "*"},
-            "body": json.dumps({"message": str(e)}),
-        }
+        return _resp(500, {"message": str(e)})
 
 
+# ----------------- Clientes -----------------
 def create_customer(event):
-    """
-    Create a new customer.
-    """
+    """Orden desde el catálogo público (crea cliente si no existe + transacción + emails)."""
     try:
         body = json.loads(event.get("body", "{}"))
         business_id = body.get("business_id", "")
-        response = customers_table.scan(
-            FilterExpression=Attr("business_id").eq(business_id)
-        )
-        transactions = []
-        if response.get("Items", []):
-            items = response.get("Items", [])
-            if any(
-                item.get("email", "") == body.get("email", "").strip() for item in items
-            ):
-                customer_id = next(
-                    item.get("customer_id", "")
-                    for item in items
-                    if item.get("email", "") == body.get("email", "").strip()
-                )
-                transactions = next(
-                    item.get("transactions", [])
-                    for item in items
-                    if item.get("customer_id", "") == customer_id
-                )
-
-                transaction = body.get("transaction", {})
-
-                pm = transaction.get("payment_method", {})
-                payment_method = payment_methods_table.get_item(
-                    Key={"payment_method_id": pm.get("payment_method_id", "")}
-                )
-                if transaction is not None and transaction.get("product_id", "") != "":
-                    transaction_id = str(uuid.uuid4())
-                    transactions.append(
-                        {
-                            "transaction_id": transaction_id,
-                            "product_id": transaction.get("product_id", ""),
-                            "product_name": transaction.get("product_name", ""),
-                            "quantity": transaction.get("quantity", 1),
-                            "price": Decimal(transaction.get("price", 0.00)),
-                            "status": "Pendiente de pago",
-                            "accept_terms": transaction.get("accept_terms", False),
-                            "payment_method": payment_method.get("Item", {}),
-                            "delivery_day": transaction.get("delivery_day", ""),
-                            "create_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            "create_user": body.get("email", ""),
-                        }
-                    )
-                customers_table.update_item(
-                    Key={"customer_id": customer_id},
-                    UpdateExpression="SET given_name = :given_name, family_name = :family_name, email = :email, phone = :phone, age = :age, transactions = :transactions, update_date = :update_date, update_user = :update_user",
-                    ExpressionAttributeValues={
-                        ":given_name": body.get("given_name", ""),
-                        ":family_name": body.get("family_name", ""),
-                        ":email": body.get("email", ""),
-                        ":phone": body.get("phone", ""),
-                        ":age": int(body.get("age", 0)),
-                        ":transactions": transactions,
-                        ":update_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        ":update_user": body.get("email", ""),
-                    },
-                    ReturnValues="UPDATED_NEW",
-                )
-
-                business_response = business_table.get_item(
-                    Key={"business_id": business_id}
-                )
-                business = business_response["Item"]
-
-                user = cognito.admin_get_user(
-                    UserPoolId=USER_POOL_ID, Username=business.get("user_id", "")
-                )
-
-                # Formatear los atributos
-                user_attrs = {
-                    attr["Name"]: attr["Value"] for attr in user["UserAttributes"]
-                }
-
-                payment_link = f"{FRONT_END_URL}/paymentValidation/{customer_id}"
-
-                order_details = {
-                    "business_name": business.get("business_name", "Qatalo"),
-                    "business_logo_url": business.get("business_logo_url", ""),
-                    "transaction_id": transaction_id,
-                    "order_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "product_name": transaction.get("product_name", ""),
-                    "quantity": transaction.get("quantity", 1),
-                    "total_amount": str(
-                        (
-                            Decimal(transaction.get("price", 0.00))
-                            * int(transaction.get("quantity", 1))
-                        )
-                    ),
-                    "currency": transaction.get("payment_method", {}).get(
-                        "currency", ""
-                    ),
-                    "upload_link": payment_link,
-                    "business_email": user_attrs.get("email", "Qatalo"),
-                    "business_phone": business.get("business_phone", "Qatalo"),
-                    "customer_name": f"{body.get('given_name')} {body.get('family_name', '')}",
-                }
-                new_order_create_email(
-                    user_attrs.get("email", "Qatalo"),
-                    to_name=business.get("business_name", "Qatalo"),
-                    order_details=order_details,
-                )
-                return order_create_email(
-                    body.get("email"),
-                    to_name=f"{body.get('given_name')} {body.get('family_name')}",
-                    order_details=order_details,
-                )
-            else:
-                return create_customer_transaction(body=body)
-        else:
+        email = body.get("email", "").strip()
+        items = customers_table.scan(FilterExpression=Attr("business_id").eq(business_id)).get("Items", [])
+        existing = next((i for i in items if i.get("email", "") == email), None)
+        if not existing:
             return create_customer_transaction(body=body)
 
-    except Exception as e:
-        print(json.dumps({"event": "create_customer", "Error": str(e)}))
-        return {
-            "statusCode": 500,
-            "headers": {"Access-Control-Allow-Origin": "*"},
-            "body": json.dumps({"message": str(e)}),
-        }
-
-
-def create_customer_without_transactions(event):
-    """
-    Create a new customer.
-    """
-    try:
-        body = json.loads(event.get("body", "{}"))
-        business_id = body.get("business_id", "")
-        response = customers_table.scan(
-            FilterExpression=Attr("business_id").eq(business_id)
+        customer_id = existing.get("customer_id", "")
+        transactions = existing.get("transactions", [])
+        transaction = body.get("transaction", {})
+        if transaction and transaction.get("product_id", "") != "":
+            pm = transaction.get("payment_method", {})
+            payment_method = payment_methods_table.get_item(
+                Key={"payment_method_id": pm.get("payment_method_id", "")}
+            ).get("Item", {})
+            transactions.append({
+                "transaction_id": str(uuid.uuid4()),
+                "product_id": transaction.get("product_id", ""),
+                "product_name": transaction.get("product_name", ""),
+                "quantity": transaction.get("quantity", 1),
+                "price": Decimal(str(transaction.get("price", 0) or 0)),
+                "status": "Pendiente de pago",
+                "accept_terms": transaction.get("accept_terms", False),
+                "payment_method": payment_method,
+                "delivery_day": transaction.get("delivery_day", ""),
+                "create_date": _now(),
+                "create_user": email,
+            })
+        customers_table.update_item(
+            Key={"customer_id": customer_id},
+            UpdateExpression="SET given_name=:g, family_name=:f, email=:e, phone=:p, age=:a, transactions=:t, update_date=:ud, update_user=:uu",
+            ExpressionAttributeValues={
+                ":g": body.get("given_name", ""), ":f": body.get("family_name", ""),
+                ":e": email, ":p": body.get("phone", ""), ":a": int(body.get("age", 0) or 0),
+                ":t": transactions, ":ud": _now(), ":uu": email,
+            },
         )
-        if response.get("Items", []):
-            items = response.get("Items", [])
-            if any(
-                item.get("email", "") == body.get("email", "").strip() for item in items
-            ):
-                return {
-                    "statusCode": 409,
-                    "headers": {"Access-Control-Allow-Origin": "*"},
-                    "body": json.dumps({"message": "Cliente ya existe"}),
-                }
-            else:
-                customer_id = str(uuid.uuid4())
-                business_id = body.get("business_id", "")
-                customers_table.put_item(
-                    Item={
-                        "customer_id": customer_id,
-                        "business_id": business_id,
-                        "given_name": body.get("given_name", ""),
-                        "family_name": body.get("family_name", ""),
-                        "email": body.get("email", "").strip(),
-                        "phone": body.get("phone", ""),
-                        "age": int(body.get("age", 0)),
-                        "address": body.get("address", ""),
-                        "transactions": [],
-                        "create_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        "create_user": body.get("email", "").strip(),
-                        "update_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        "update_user": body.get("email", "").strip(),
-                    }
-                )
-        else:
-            customer_id = str(uuid.uuid4())
-            business_id = body.get("business_id", "")
-            customers_table.put_item(
-                Item={
-                    "customer_id": customer_id,
-                    "business_id": business_id,
-                    "given_name": body.get("given_name", ""),
-                    "family_name": body.get("family_name", ""),
-                    "email": body.get("email", "").strip(),
-                    "phone": body.get("phone", ""),
-                    "age": int(body.get("age", 0)),
-                    "transactions": [],
-                    "create_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "create_user": body.get("email", "").strip(),
-                    "update_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "update_user": body.get("email", "").strip(),
-                }
-            )
-
-        return {
-            "statusCode": 200,
-            "headers": {"Access-Control-Allow-Origin": "*"},
-            "body": json.dumps(
-                {"message": "Cliente creado exitosamente", "customer_id": customer_id}
-            ),
-        }
+        try:
+            business = _get_business(business_id) or {}
+            owner_email = _owner_email(business)
+            new_tx = transactions[-1] if transactions else {}
+            details = _order_details(business, new_tx, owner_email,
+                customer_name=f"{body.get('given_name')} {body.get('family_name', '')}",
+                upload_link=f"{FRONT_END_URL}/paymentValidation/{customer_id}")
+            new_order_create_email(owner_email or "Qatalo", to_name=business.get("business_name", "Qatalo"), order_details=details)
+            order_create_email(email, to_name=details["customer_name"], order_details=details)
+        except Exception as notify_err:
+            print(json.dumps({"event": "create_customer.notify", "Error": str(notify_err)}))
+        return _resp(200, {"message": "Orden creada", "customer_id": customer_id})
     except Exception as e:
         print(json.dumps({"event": "create_customer", "Error": str(e)}))
-        return {
-            "statusCode": 500,
-            "headers": {"Access-Control-Allow-Origin": "*"},
-            "body": json.dumps({"message": str(e)}),
-        }
+        return _resp(500, {"message": str(e)})
 
 
 def create_customer_transaction(body):
-    transactions = []
-    transaction = body.get("transaction", {})
-    pm = transaction.get("payment_method", {})
-    payment_method = payment_methods_table.get_item(
-        Key={"payment_method_id": pm.get("payment_method_id", "")}
-    )
-
-    transaction_id = str(uuid.uuid4())
-    transactions.append(
-        {
-            "transaction_id": transaction_id,
+    try:
+        business_id = body.get("business_id", "")
+        transaction = body.get("transaction", {})
+        pm = transaction.get("payment_method", {})
+        payment_method = payment_methods_table.get_item(
+            Key={"payment_method_id": pm.get("payment_method_id", "")}
+        ).get("Item", {})
+        customer_id = str(uuid.uuid4())
+        tx = {
+            "transaction_id": str(uuid.uuid4()),
             "product_id": transaction.get("product_id", ""),
             "product_name": transaction.get("product_name", ""),
             "quantity": transaction.get("quantity", 1),
-            "price": Decimal(transaction.get("price", 0.00)),
+            "price": Decimal(str(transaction.get("price", 0) or 0)),
             "status": "Pendiente de pago",
             "accept_terms": transaction.get("accept_terms", False),
-            "payment_method": payment_method.get("Item", {}),
+            "payment_method": payment_method,
             "delivery_day": transaction.get("delivery_day", ""),
-            "create_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "locality": transaction.get("locality", ""),
+            "create_date": _now(),
             "create_user": body.get("email", ""),
         }
-    )
-    customer_id = str(uuid.uuid4())
-    business_id = body.get("business_id", "")
-    customers_table.put_item(
-        Item={
-            "customer_id": customer_id,
-            "business_id": business_id,
-            "given_name": body.get("given_name", ""),
-            "family_name": body.get("family_name", ""),
-            "email": body.get("email", ""),
-            "phone": body.get("phone", ""),
-            "age": int(body.get("age", 0)),
-            "transactions": transactions,
-            "create_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "create_user": body.get("email", ""),
-            "update_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "update_user": body.get("email", ""),
-        }
-    )
-    business_response = business_table.get_item(Key={"business_id": business_id})
-    business = business_response["Item"]
-
-    user = cognito.admin_get_user(
-        UserPoolId=USER_POOL_ID, Username=business.get("user_id", "")
-    )
-
-    # Formatear los atributos
-    user_attrs = {attr["Name"]: attr["Value"] for attr in user["UserAttributes"]}
-
-    payment_link = f"{FRONT_END_URL}/paymentValidation/{customer_id}"
-
-    payment_link = f"{FRONT_END_URL}/paymentValidation/{customer_id}"
-
-    order_details = {
-        "business_name": business.get("business_name", "Qatalo"),
-        "business_logo_url": business.get("business_logo_url", ""),
-        "transaction_id": transaction_id,
-        "order_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "product_name": transaction.get("product_name", ""),
-        "quantity": transaction.get("quantity", 1),
-        "total_amount": str(
-            (
-                Decimal(transaction.get("price", 0.00))
-                * int(transaction.get("quantity", 1))
-            )
-        ),
-        "currency": transaction.get("payment_method", {}).get("currency", ""),
-        "upload_link": payment_link,
-        "business_email": user_attrs.get("email", "Qatalo"),
-        "business_phone": business.get("business_phone", "Qatalo"),
-        "customer_name": f"{body.get('given_name')} {body.get('family_name', '')}",
-    }
-    new_order_create_email(
-        user_attrs.get("email", "Qatalo"),
-        to_name=business.get("business_name", "Qatalo"),
-        order_details=order_details,
-    )
-    return order_create_email(
-        body.get("email"),
-        to_name=f"{body.get('given_name')} {body.get('family_name', '')}",
-        order_details=order_details,
-    )
+        customers_table.put_item(Item={
+            "customer_id": customer_id, "business_id": business_id,
+            "given_name": body.get("given_name", ""), "family_name": body.get("family_name", ""),
+            "email": body.get("email", ""), "phone": body.get("phone", ""),
+            "age": int(body.get("age", 0) or 0), "transactions": [tx],
+            "create_date": _now(), "create_user": body.get("email", ""),
+            "update_date": _now(), "update_user": body.get("email", ""),
+        })
+        try:
+            business = _get_business(business_id) or {}
+            owner_email = _owner_email(business)
+            details = _order_details(business, tx, owner_email,
+                customer_name=f"{body.get('given_name')} {body.get('family_name', '')}",
+                upload_link=f"{FRONT_END_URL}/paymentValidation/{customer_id}")
+            new_order_create_email(owner_email or "Qatalo", to_name=business.get("business_name", "Qatalo"), order_details=details)
+            order_create_email(body.get("email"), to_name=details["customer_name"], order_details=details)
+        except Exception as notify_err:
+            print(json.dumps({"event": "create_customer_transaction.notify", "Error": str(notify_err)}))
+        return _resp(200, {"message": "Orden creada", "customer_id": customer_id})
+    except Exception as e:
+        print(json.dumps({"event": "create_customer_transaction", "Error": str(e)}))
+        return _resp(500, {"message": str(e)})
+def create_customer_without_transactions(event):
+    try:
+        body = json.loads(event.get("body", "{}"))
+        business_id = body.get("business_id", "")
+        email = body.get("email", "").strip()
+        items = customers_table.scan(FilterExpression=Attr("business_id").eq(business_id)).get("Items", [])
+        if any(i.get("email", "") == email for i in items):
+            return _resp(409, {"message": "Cliente ya existe"})
+        customer_id = str(uuid.uuid4())
+        customers_table.put_item(Item={
+            "customer_id": customer_id, "business_id": business_id,
+            "given_name": body.get("given_name", ""), "family_name": body.get("family_name", ""),
+            "email": email, "phone": body.get("phone", ""), "age": int(body.get("age", 0)),
+            "transactions": [], "create_date": _now(), "create_user": email,
+            "update_date": _now(), "update_user": email,
+        })
+        return _resp(200, {"message": "Cliente creado exitosamente", "customer_id": customer_id})
+    except Exception as e:
+        print(json.dumps({"event": "create_customer_without_transactions", "Error": str(e)}))
+        return _resp(500, {"message": str(e)})
 
 
 def update_customer(event, user_name, customer_id, user_id):
-    """
-    Update an existing customer.
-    """
     try:
+        customer = _get_customer(customer_id)
+        if not customer:
+            return _resp(404, {"message": "Cliente no encontrado"})
+        err = _check_owner(customer, user_id)
+        if err:
+            return err
         body = json.loads(event.get("body", "{}"))
         customers_table.update_item(
             Key={"customer_id": customer_id},
-            UpdateExpression="SET given_name = :given_name, family_name = :family_name, email = :email, phone = :phone, age = :age, user_id = :user_id, update_date = :update_date, update_user = :update_user",
+            UpdateExpression="SET given_name=:g, family_name=:f, email=:e, phone=:p, user_id=:u, update_date=:ud, update_user=:uu",
             ExpressionAttributeValues={
-                ":given_name": body.get("given_name", ""),
-                ":family_name": body.get("family_name", ""),
-                ":email": body.get("email", ""),
-                ":phone": body.get("phone", ""),
-                ":age": int(body.get("age", 0)),
-                ":user_id": user_id,
-                ":update_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                ":update_user": user_name,
+                ":g": body.get("given_name", ""), ":f": body.get("family_name", ""),
+                ":e": body.get("email", ""), ":p": body.get("phone", ""),
+                ":u": user_id, ":ud": _now(), ":uu": user_name,
             },
             ReturnValues="UPDATED_NEW",
         )
-        return {
-            "statusCode": 200,
-            "headers": {"Access-Control-Allow-Origin": "*"},
-            "body": json.dumps({"message": "Cliente actualizado correctamente"}),
-        }
-
+        return _resp(200, {"message": "Cliente actualizado correctamente"})
     except Exception as e:
-        print(json.dumps({"event": "create_member", "Error": str(e)}))
-        return {
-            "statusCode": 500,
-            "headers": {"Access-Control-Allow-Origin": "*"},
-            "body": json.dumps({"message": str(e)}),
-        }
+        print(json.dumps({"event": "update_customer", "Error": str(e)}))
+        return _resp(500, {"message": str(e)})
 
 
-def delete_customer(customer_id: str):
-    """
-    Delete a customer by its ID.
-    """
+def delete_customer(customer_id, user_id):
     try:
+        customer = _get_customer(customer_id)
+        if not customer:
+            return _resp(404, {"message": "Cliente no encontrado"})
+        err = _check_owner(customer, user_id)
+        if err:
+            return err
         customers_table.delete_item(Key={"customer_id": customer_id})
-        return {
-            "statusCode": 200,
-            "headers": {"Access-Control-Allow-Origin": "*"},
-            "body": json.dumps({"message": "Cliente eliminado correctamente"}),
-        }
+        return _resp(200, {"message": "Cliente eliminado correctamente"})
     except Exception as e:
         print(json.dumps({"event": "delete_customer", "Error": str(e)}))
-        return {
-            "statusCode": 500,
-            "headers": {"Access-Control-Allow-Origin": "*"},
-            "body": json.dumps({"message": str(e)}),
-        }
+        return _resp(500, {"message": str(e)})
 
 
+# ----------------- Transacciones -----------------
+def approve_transaction(event, user_id=None):
+    try:
+        body = json.loads(event.get("body", "{}"))
+        customer = _get_customer(body.get("customer_id", ""))
+        if not customer:
+            return _resp(404, {"message": "Cliente no encontrado"})
+        err = _check_owner(customer, user_id)
+        if err:
+            return err
+        transactions = customer.get("transactions", [])
+        tx = _find_transaction(transactions, body.get("transaction_id", ""))
+        if not tx:
+            return _resp(404, {"message": "Transacción no encontrada"})
+        if tx.get("status") == "Aprobada":
+            return _resp(200, {"message": "La transacción ya estaba aprobada"})
+        tx["status"] = "Aprobada"
+        _save_transactions(customer["customer_id"], transactions, customer.get("email", ""))
+        _adjust_stock(tx.get("product_id", ""), -int(tx.get("quantity", 1) or 1), customer.get("email", ""))
+        business = _get_business(customer.get("business_id", "")) or {}
+        owner_email = _owner_email(business)
+        _notify_n8n(customer.get("phone", ""), tx.get("transaction_id", ""), "Aprobada")
+        return order_verified_email(
+            customer.get("email"),
+            to_name=f"{customer.get('given_name')} {customer.get('family_name')}",
+            order_details=_order_details(business, tx, owner_email, business_website_url=_catalog_url(business)),
+        )
+    except Exception as e:
+        print(json.dumps({"event": "approve_transaction", "Error": str(e)}))
+        return _resp(500, {"message": str(e)})
+
+
+def delivered_transaction(event, user_id=None):
+    try:
+        body = json.loads(event.get("body", "{}"))
+        customer = _get_customer(body.get("customer_id", ""))
+        if not customer:
+            return _resp(404, {"message": "Cliente no encontrado"})
+        err = _check_owner(customer, user_id)
+        if err:
+            return err
+        transactions = customer.get("transactions", [])
+        tx = _find_transaction(transactions, body.get("transaction_id", ""))
+        if not tx:
+            return _resp(404, {"message": "Transacción no encontrada"})
+        tx["status"] = "Entregada"  # el stock ya se descontó al aprobar
+        _save_transactions(customer["customer_id"], transactions, customer.get("email", ""))
+        business = _get_business(customer.get("business_id", "")) or {}
+        owner_email = _owner_email(business)
+        return order_delivered_email(
+            customer.get("email"),
+            to_name=f"{customer.get('given_name')} {customer.get('family_name')}",
+            order_details=_order_details(business, tx, owner_email, business_website_url=_catalog_url(business)),
+        )
+    except Exception as e:
+        print(json.dumps({"event": "delivered_transaction", "Error": str(e)}))
+        return _resp(500, {"message": str(e)})
+
+
+def cancel_transaction(event, user_id=None):
+    try:
+        body = json.loads(event.get("body", "{}"))
+        customer = _get_customer(body.get("customer_id", ""))
+        if not customer:
+            return _resp(404, {"message": "Cliente no encontrado"})
+        err = _check_owner(customer, user_id)
+        if err:
+            return err
+        transactions = customer.get("transactions", [])
+        tx = _find_transaction(transactions, body.get("transaction_id", ""))
+        if not tx:
+            return _resp(404, {"message": "Transacción no encontrada"})
+        prev_status = tx.get("status")
+        tx["status"] = "Cancelada"
+        tx["cancellation_reason"] = body.get("cancellation_reason", "No especificada")
+        _save_transactions(customer["customer_id"], transactions, customer.get("email", ""))
+        if prev_status in ("Aprobada", "Entregada"):  # restaurar stock que se había descontado
+            _adjust_stock(tx.get("product_id", ""), int(tx.get("quantity", 1) or 1), customer.get("email", ""))
+        business = _get_business(customer.get("business_id", "")) or {}
+        owner_email = _owner_email(business)
+        return order_cancel_email(
+            customer.get("email"),
+            to_name=f"{customer.get('given_name')} {customer.get('family_name')}",
+            order_details=_order_details(
+                business, tx, owner_email,
+                cancellation_date=_now(),
+                cancellation_reason=tx["cancellation_reason"],
+                business_website_url=_catalog_url(business),
+            ),
+        )
+    except Exception as e:
+        print(json.dumps({"event": "cancel_transaction", "Error": str(e)}))
+        return _resp(500, {"message": str(e)})
+
+
+def update_transaction(event, user_id=None):
+    try:
+        body = json.loads(event.get("body", "{}"))
+        customer = _get_customer(body.get("customer_id", ""))
+        if not customer:
+            return _resp(404, {"message": "Cliente no encontrado"})
+        err = _check_owner(customer, user_id)
+        if err:
+            return err
+        transactions = customer.get("transactions", [])
+        tx = _find_transaction(transactions, body.get("transaction_id", ""))
+        if not tx:
+            return _resp(404, {"message": "Transacción no encontrada"})
+        tx["delivery_day"] = body.get("delivery_day", tx.get("delivery_day", ""))
+        tx["price"] = Decimal(str(body.get("price", tx.get("price", 0)) or 0))
+        tx["quantity"] = body.get("quantity", tx.get("quantity", 1))
+        tx["product_id"] = body.get("product_id", tx.get("product_id", ""))
+        tx["product_name"] = body.get("product_name", tx.get("product_name", ""))
+        tx["payment_method"] = body.get("payment_method", tx.get("payment_method", {}))
+        _save_transactions(customer["customer_id"], transactions, customer.get("email", ""))
+        return _resp(200, {"message": "Transacción actualizada correctamente"})
+    except Exception as e:
+        print(json.dumps({"event": "update_transaction", "Error": str(e)}))
+        return _resp(500, {"message": str(e)})
+
+
+def add_transaction(event, user_id=None):
+    try:
+        body = json.loads(event.get("body", "{}"))
+        customer = _get_customer(body.get("customer_id", ""))
+        if not customer:
+            return _resp(404, {"message": "Cliente no encontrado"})
+        err = _check_owner(customer, user_id)
+        if err:
+            return err
+        transactions = customer.get("transactions", [])
+        transactions.append({
+            "transaction_id": str(uuid.uuid4()),
+            "product_id": body.get("product_id", ""),
+            "product_name": body.get("product_name", ""),
+            "quantity": body.get("quantity", 1),
+            "price": Decimal(str(body.get("price", 0) or 0)),
+            "status": "Pendiente de pago",
+            "accept_terms": True,
+            "payment_method": body.get("payment_method", {}),
+            "delivery_day": body.get("delivery_day", ""),
+            "locality": body.get("locality", ""),
+            "create_date": _now(),
+            "create_user": customer.get("email", ""),
+        })
+        _save_transactions(customer["customer_id"], transactions, customer.get("email", ""))
+        return _resp(200, {"message": "Transacción creada correctamente"})
+    except Exception as e:
+        print(json.dumps({"event": "add_transaction", "Error": str(e)}))
+        return _resp(500, {"message": str(e)})
+
+
+def delete_transaction(event, user_id=None):
+    try:
+        body = json.loads(event.get("body", "{}"))
+        customer = _get_customer(body.get("customer_id", ""))
+        if not customer:
+            return _resp(404, {"message": "Cliente no encontrado"})
+        err = _check_owner(customer, user_id)
+        if err:
+            return err
+        transactions = [t for t in customer.get("transactions", []) if t.get("transaction_id", "") != body.get("transaction_id", "")]
+        _save_transactions(customer["customer_id"], transactions, customer.get("email", ""))
+        return _resp(200, {"message": "Transacción eliminada correctamente"})
+    except Exception as e:
+        print(json.dumps({"event": "delete_transaction", "Error": str(e)}))
+        return _resp(500, {"message": str(e)})
+
+
+# ----------------- Recibo -----------------
 def upload_receipt(event):
     try:
-        # Paso 1: Decodificar el body de base64
         body_bytes = base64.b64decode(event["body"])
-        # Paso 2: Obtener content-type (con boundary)
-        content_type = event["headers"].get("content-type") or event["headers"].get(
-            "Content-Type"
-        )
-        # Paso 3: Parsear multipart
+        content_type = event["headers"].get("content-type") or event["headers"].get("Content-Type")
         multipart_data = decoder.MultipartDecoder(body_bytes, content_type)
-        file_infos = []  # Para múltiples archivos
-        customer_update = {}
-
+        file_infos, fields = [], {}
         for part in multipart_data.parts:
             headers = part.headers[b"Content-Disposition"].decode()
             name = headers.split('name="')[1].split('"')[0]
-
             if "filename=" in headers:
-                original_filename = headers.split('filename="')[1].split('"')[0]
-                if original_filename and len(part.content) > 0:
-                    extension = os.path.splitext(original_filename)[1].lower()
-                    part_content_type = part.headers.get(
-                        b"Content-Type", b"application/octet-stream"
-                    ).decode()
-                    file_infos.append(
-                        {
-                            "field_name": name,
-                            "original_filename": original_filename,
-                            "content": part.content,
-                            "extension": extension,
-                            "content_type": part_content_type,
-                        }
-                    )
+                original = headers.split('filename="')[1].split('"')[0]
+                if original and len(part.content) > 0:
+                    file_infos.append({
+                        "content": part.content,
+                        "extension": os.path.splitext(original)[1].lower(),
+                        "content_type": part.headers.get(b"Content-Type", b"application/octet-stream").decode(),
+                    })
             else:
-                customer_update[name] = part.text
+                fields[name] = part.text
 
-        if file_infos:
-            transaction_id = customer_update.get("transaction_id", "")
-            print(customer_update)
-            images = upload_image(
-                file_info=file_infos[0],
-                customer_id=customer_update.get("customer_id", ""),
-                transaction_id=transaction_id,
-            )
-            if images:
-                response = customers_table.get_item(
-                    Key={"customer_id": customer_update.get("customer_id", "")}
-                )
-                if "Item" in response:
-                    item = response["Item"]
+        if not file_infos:
+            return _resp(400, {"message": "No se recibió ningún archivo"})
 
-                    customer = {
-                        "customer_id": item.get("customer_id", ""),
-                        "business_id": item.get("business_id", ""),
-                        "given_name": item.get("given_name", ""),
-                        "family_name": item.get("family_name", ""),
-                        "email": item.get("email", ""),
-                        "phone": item.get("phone", ""),
-                        "transactions": item.get("transactions", []),
-                    }
-                    transaction = next(
-                        (
-                            tran
-                            for tran in customer.get("transactions", [])
-                            if tran.get("transaction_id", "") == transaction_id
-                        ),
-                        None,
-                    )
-                    if transaction:
-                        transaction["receipt_url"] = images
-                        transaction["status"] = "Pendiente de validación"
-                        print(customer_update)
-                        transaction["amount_paid"] = customer_update.get(
-                            "amount_paid", ""
-                        )
-                        transaction["destiny_account"] = customer_update.get(
-                            "destiny_account", ""
-                        )
-                        transaction["transfer_date"] = customer_update.get(
-                            "transfer_date", ""
-                        )
-                        transaction["reference"] = customer_update.get("reference", "")
-                        customers_table.update_item(
-                            Key={"customer_id": customer.get("customer_id", "")},
-                            UpdateExpression="SET transactions = :transactions, update_date = :update_date, update_user = :update_user",
-                            ExpressionAttributeValues={
-                                ":transactions": customer.get("transactions", []),
-                                ":update_date": datetime.now().strftime(
-                                    "%Y-%m-%d %H:%M:%S"
-                                ),
-                                ":update_user": customer.get("email", ""),
-                            },
-                            ReturnValues="UPDATED_NEW",
-                        )
-                        business_response = business_table.get_item(
-                            Key={"business_id": customer.get("business_id", "")}
-                        )
-                        business = business_response["Item"]
+        customer_id = fields.get("customer_id", "")
+        transaction_id = fields.get("transaction_id", "")
+        receipt_url = upload_image(file_infos[0], customer_id=customer_id, transaction_id=transaction_id)
+        if not receipt_url:
+            return _resp(500, {"message": "No se pudo subir el recibo"})
 
-                        user = cognito.admin_get_user(
-                            UserPoolId=USER_POOL_ID,
-                            Username=business.get("user_id", ""),
-                        )
+        customer = _get_customer(customer_id)
+        if not customer:
+            return _resp(404, {"message": "Cliente no encontrado"})
+        transactions = customer.get("transactions", [])
+        tx = _find_transaction(transactions, transaction_id)
+        if not tx:
+            return _resp(404, {"message": "Transacción no encontrada"})
+        tx["receipt_url"] = receipt_url
+        tx["status"] = "Pendiente de validación"
+        tx["amount_paid"] = fields.get("amount_paid", "")
+        tx["destiny_account"] = fields.get("destiny_account", "")
+        tx["transfer_date"] = fields.get("transfer_date", "")
+        tx["reference"] = fields.get("reference", "")
+        _save_transactions(customer_id, transactions, customer.get("email", ""))
 
-                        # Formatear los atributos
-                        user_attrs = {
-                            attr["Name"]: attr["Value"]
-                            for attr in user["UserAttributes"]
-                        }
-
-                        business_website_url = f"{FRONT_END_URL}/catalog/{business.get('business_slug', '')}"
-
-                        order_details = {
-                            "business_name": business.get("business_name", "Qatalo"),
-                            "business_logo_url": business.get("business_logo_url", ""),
-                            "transaction_id": transaction_id,
-                            "order_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            "product_name": transaction.get("product_name", ""),
-                            "quantity": transaction.get("quantity", 1),
-                            "total_amount": str(
-                                (
-                                    Decimal(transaction.get("price", 0.00))
-                                    * int(transaction.get("quantity", 1))
-                                )
-                            ),
-                            "currency": transaction.get("payment_method", {}).get(
-                                "currency", ""
-                            ),
-                            "business_website_url": business_website_url,
-                            "business_email": user_attrs.get("email", "Qatalo"),
-                            "business_phone": business.get("business_phone", "Qatalo"),
-                        }
-                        return order_receipt_email(
-                            customer.get("email"),
-                            to_name=f"{customer.get('given_name')} {customer.get('family_name')}",
-                            order_details=order_details,
-                        )
-
-    except Exception as e:
-        print(
-            json.dumps(
-                {
-                    "event": "upload_receipt",
-                    "Error": str(e),
-                    "trace": traceback.format_exc(),
-                }
-            )
+        business = _get_business(customer.get("business_id", "")) or {}
+        owner_email = _owner_email(business)
+        return order_receipt_email(
+            customer.get("email"),
+            to_name=f"{customer.get('given_name')} {customer.get('family_name')}",
+            order_details=_order_details(business, tx, owner_email, business_website_url=_catalog_url(business)),
         )
-        return {
-            "statusCode": 500,
-            "headers": {"Access-Control-Allow-Origin": "*"},
-            "body": json.dumps({"message": str(e)}),
-        }
-
-
-def cancel_transaction(event):
-    try:
-        body = json.loads(event.get("body", "{}"))
-        customer_id = body.get("customer_id", "")
-        transaction_id = body.get("transaction_id", "")
-
-        response = customers_table.get_item(Key={"customer_id": customer_id})
-        if "Item" in response:
-            customer = response["Item"]
-            transaction = next(
-                (
-                    tran
-                    for tran in customer.get("transactions", [])
-                    if tran.get("transaction_id", "") == transaction_id
-                ),
-                None,
-            )
-            if transaction:
-                transaction["status"] = "Cancelada"
-                transaction["cancellation_reason"] = body.get(
-                    "cancellation_reason", "No especificada"
-                )
-
-                customers_table.update_item(
-                    Key={"customer_id": customer.get("customer_id", "")},
-                    UpdateExpression="SET transactions = :transactions, update_date = :update_date, update_user = :update_user",
-                    ExpressionAttributeValues={
-                        ":transactions": customer.get("transactions", []),
-                        ":update_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        ":update_user": customer.get("email", ""),
-                    },
-                    ReturnValues="UPDATED_NEW",
-                )
-                business_id = customer.get("business_id", "")
-                business_response = business_table.get_item(
-                    Key={"business_id": business_id}
-                )
-                business = business_response["Item"]
-
-                user = cognito.admin_get_user(
-                    UserPoolId=USER_POOL_ID, Username=business.get("user_id", "")
-                )
-
-                # Formatear los atributos
-                user_attrs = {
-                    attr["Name"]: attr["Value"] for attr in user["UserAttributes"]
-                }
-
-                business_website_url = (
-                    f"{FRONT_END_URL}/catalog/{business.get('business_slug', '')}"
-                )
-
-                order_details = {
-                    "business_logo_url": business.get("business_logo_url", ""),
-                    "transaction_id": transaction_id,
-                    "order_date": transaction.get("create_date", ""),
-                    "cancellation_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "product_name": transaction.get("product_name", ""),
-                    "cancellation_reason": body.get(
-                        "cancellation_reason", "No especificada"
-                    ),
-                    "business_website_url": business_website_url,
-                    "business_email": user_attrs.get("email", ""),
-                    "business_phone": business.get("business_phone", ""),
-                }
-                return order_cancel_email(
-                    customer.get("email"),
-                    to_name=f"{customer.get('given_name')} {customer.get('family_name')}",
-                    order_details=order_details,
-                )
-            else:
-                return {
-                    "statusCode": 404,
-                    "headers": {"Access-Control-Allow-Origin": "*"},
-                    "body": json.dumps({"message": "Transacción no encontrada"}),
-                }
-        else:
-            return {
-                "statusCode": 404,
-                "headers": {"Access-Control-Allow-Origin": "*"},
-                "body": json.dumps({"message": "Cliente no encontrado"}),
-            }
     except Exception as e:
-        print(json.dumps({"event": "cancel_transaction", "Error": str(e)}))
-        return {
-            "statusCode": 500,
-            "headers": {"Access-Control-Allow-Origin": "*"},
-            "body": json.dumps({"message": str(e)}),
-        }
-
-
-def approve_transaction(event):
-    try:
-        body = json.loads(event.get("body", "{}"))
-        customer_id = body.get("customer_id", "")
-        transaction_id = body.get("transaction_id", "")
-
-        print(body)
-        response = customers_table.get_item(Key={"customer_id": customer_id})
-        if "Item" in response:
-            item = response["Item"]
-
-            customer = {
-                "customer_id": item.get("customer_id", ""),
-                "business_id": item.get("business_id", ""),
-                "given_name": item.get("given_name", ""),
-                "family_name": item.get("family_name", ""),
-                "email": item.get("email", ""),
-                "phone": item.get("phone", ""),
-                "transactions": item.get("transactions", []),
-            }
-            transaction = next(
-                (
-                    tran
-                    for tran in customer.get("transactions", [])
-                    if tran.get("transaction_id", "") == transaction_id
-                ),
-                None,
-            )
-            if transaction:
-                transaction["status"] = "Aprobada"
-                customers_table.update_item(
-                    Key={"customer_id": customer.get("customer_id", "")},
-                    UpdateExpression="SET transactions = :transactions, update_date = :update_date, update_user = :update_user",
-                    ExpressionAttributeValues={
-                        ":transactions": customer.get("transactions", []),
-                        ":update_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        ":update_user": customer.get("email", ""),
-                    },
-                    ReturnValues="UPDATED_NEW",
-                )
-                business_response = business_table.get_item(
-                    Key={"business_id": customer.get("business_id", "")}
-                )
-                business = business_response["Item"]
-
-                user = cognito.admin_get_user(
-                    UserPoolId=USER_POOL_ID, Username=business.get("user_id", "")
-                )
-
-                # Formatear los atributos
-                user_attrs = {
-                    attr["Name"]: attr["Value"] for attr in user["UserAttributes"]
-                }
-
-                product_response = products_table.get_item(
-                    Key={"product_id": transaction.get("product_id", "")}
-                )
-                product = product_response["Item"]
-                quantity = int(product.get("quantity", 0)) - int(
-                    transaction.get("quantity", 1)
-                )
-                if quantity < 0:
-                    quantity = 0
-
-                product["quantity"] = quantity
-                products_table.update_item(
-                    Key={"product_id": product.get("product_id", "")},
-                    UpdateExpression="SET quantity = :quantity, update_date = :update_date, update_user = :update_user",
-                    ExpressionAttributeValues={
-                        ":quantity": product.get("quantity", 0),
-                        ":update_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        ":update_user": user_attrs.get("email", ""),
-                    },
-                    ReturnValues="UPDATED_NEW",
-                )
-
-                business_website_url = (
-                    f"{FRONT_END_URL}/catalog/{business.get('business_slug', '')}"
-                )
-
-                order_details = {
-                    "business_name": business.get("business_name", "Qatalo"),
-                    "business_logo_url": business.get("business_logo_url", ""),
-                    "transaction_id": transaction_id,
-                    "order_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "product_name": transaction.get("product_name", ""),
-                    "quantity": transaction.get("quantity", 1),
-                    "total_amount": str(
-                        (
-                            Decimal(transaction.get("price", 0.00))
-                            * int(transaction.get("quantity", 1))
-                        )
-                    ),
-                    "currency": transaction.get("payment_method", {}).get(
-                        "currency", ""
-                    ),
-                    "business_website_url": business_website_url,
-                    "business_email": user_attrs.get("email", "Qatalo"),
-                    "business_phone": business.get("business_phone", "Qatalo"),
-                }
-
-                response = requests.post(
-                    url="https://n8n.qatalo.online/webhook/transactionStatus",
-                    headers={"Content-Type": "application/json"},
-                    json={
-                        "customer_id": customer.get("phone", ""),
-                        "transaction_id": transaction_id,
-                        "transaction_status": "Aprobada",
-                    },
-                    verify=False,
-                    timeout=5,  # Forza un error si n8n tarda más de 5 segundos en responder
-                )
-
-                return order_verified_email(
-                    customer.get("email"),
-                    to_name=f"{customer.get('given_name')} {customer.get('family_name')}",
-                    order_details=order_details,
-                )
-            else:
-                return {
-                    "statusCode": 404,
-                    "headers": {"Access-Control-Allow-Origin": "*"},
-                    "body": json.dumps({"message": "Transacción no encontrada"}),
-                }
-        else:
-            return {
-                "statusCode": 404,
-                "headers": {"Access-Control-Allow-Origin": "*"},
-                "body": json.dumps({"message": "Cliente no encontrado"}),
-            }
-    except Exception as e:
-        print(json.dumps({"event": "approve_transaction", "Error": str(e)}))
-        return {
-            "statusCode": 500,
-            "headers": {"Access-Control-Allow-Origin": "*"},
-            "body": json.dumps({"message": str(e)}),
-        }
-
-
-def delivered_transaction(event):
-    try:
-        body = json.loads(event.get("body", "{}"))
-        customer_id = body.get("customer_id", "")
-        transaction_id = body.get("transaction_id", "")
-
-        response = customers_table.get_item(Key={"customer_id": customer_id})
-        if "Item" in response:
-            item = response["Item"]
-
-            customer = {
-                "customer_id": item.get("customer_id", ""),
-                "business_id": item.get("business_id", ""),
-                "given_name": item.get("given_name", ""),
-                "family_name": item.get("family_name", ""),
-                "email": item.get("email", ""),
-                "phone": item.get("phone", ""),
-                "transactions": item.get("transactions", []),
-            }
-            transaction = next(
-                (
-                    tran
-                    for tran in customer.get("transactions", [])
-                    if tran.get("transaction_id", "") == transaction_id
-                ),
-                None,
-            )
-            if transaction:
-                transaction["status"] = "Entregada"
-                customers_table.update_item(
-                    Key={"customer_id": customer.get("customer_id", "")},
-                    UpdateExpression="SET transactions = :transactions, update_date = :update_date, update_user = :update_user",
-                    ExpressionAttributeValues={
-                        ":transactions": customer.get("transactions", []),
-                        ":update_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        ":update_user": customer.get("email", ""),
-                    },
-                    ReturnValues="UPDATED_NEW",
-                )
-                business_response = business_table.get_item(
-                    Key={"business_id": customer.get("business_id", "")}
-                )
-                business = business_response["Item"]
-
-                user = cognito.admin_get_user(
-                    UserPoolId=USER_POOL_ID, Username=business.get("user_id", "")
-                )
-
-                # Formatear los atributos
-                user_attrs = {
-                    attr["Name"]: attr["Value"] for attr in user["UserAttributes"]
-                }
-
-                product_response = products_table.get_item(
-                    Key={"product_id": transaction.get("product_id", "")}
-                )
-                product = product_response["Item"]
-                quantity = int(product.get("quantity", 0)) - int(
-                    transaction.get("quantity", 1)
-                )
-                if quantity < 0:
-                    quantity = 0
-
-                product["quantity"] = quantity
-                products_table.update_item(
-                    Key={"product_id": product.get("product_id", "")},
-                    UpdateExpression="SET quantity = :quantity, update_date = :update_date, update_user = :update_user",
-                    ExpressionAttributeValues={
-                        ":quantity": product.get("quantity", 0),
-                        ":update_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        ":update_user": user_attrs.get("email", ""),
-                    },
-                    ReturnValues="UPDATED_NEW",
-                )
-
-                business_website_url = (
-                    f"{FRONT_END_URL}/catalog/{business.get('business_slug', '')}"
-                )
-
-                order_details = {
-                    "business_name": business.get("business_name", "Qatalo"),
-                    "business_logo_url": business.get("business_logo_url", ""),
-                    "transaction_id": transaction_id,
-                    "order_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "product_name": transaction.get("product_name", ""),
-                    "quantity": transaction.get("quantity", 1),
-                    "total_amount": str(
-                        (
-                            Decimal(transaction.get("price", 0.00))
-                            * int(transaction.get("quantity", 1))
-                        )
-                    ),
-                    "currency": transaction.get("payment_method", {}).get(
-                        "currency", ""
-                    ),
-                    "business_website_url": business_website_url,
-                    "business_email": user_attrs.get("email", "Qatalo"),
-                    "business_phone": business.get("business_phone", "Qatalo"),
-                }
-                return order_delivered_email(
-                    customer.get("email"),
-                    to_name=f"{customer.get('given_name')} {customer.get('family_name')}",
-                    order_details=order_details,
-                )
-            else:
-                return {
-                    "statusCode": 404,
-                    "headers": {"Access-Control-Allow-Origin": "*"},
-                    "body": json.dumps({"message": "Transacción no encontrada"}),
-                }
-        else:
-            return {
-                "statusCode": 404,
-                "headers": {"Access-Control-Allow-Origin": "*"},
-                "body": json.dumps({"message": "Cliente no encontrado"}),
-            }
-    except Exception as e:
-        print(json.dumps({"event": "approve_transaction", "Error": str(e)}))
-        return {
-            "statusCode": 500,
-            "headers": {"Access-Control-Allow-Origin": "*"},
-            "body": json.dumps({"message": str(e)}),
-        }
-
-
-def update_transaction(event):
-    try:
-        body = json.loads(event.get("body", "{}"))
-        customer_id = body.get("customer_id", "")
-        transaction_id = body.get("transaction_id", "")
-
-        response = customers_table.get_item(Key={"customer_id": customer_id})
-        if "Item" in response:
-            item = response["Item"]
-
-            customer = {
-                "customer_id": item.get("customer_id", ""),
-                "business_id": item.get("business_id", ""),
-                "given_name": item.get("given_name", ""),
-                "family_name": item.get("family_name", ""),
-                "email": item.get("email", ""),
-                "phone": item.get("phone", ""),
-                "transactions": item.get("transactions", []),
-            }
-            transaction = next(
-                (
-                    tran
-                    for tran in customer.get("transactions", [])
-                    if tran.get("transaction_id", "") == transaction_id
-                ),
-                None,
-            )
-            if transaction:
-                transaction["delivery_day"] = body.get(
-                    "delivery_day", transaction.get("delivery_day", "")
-                )
-                transaction["price"] = body.get("price", transaction.get("price", ""))
-                transaction["quantity"] = body.get(
-                    "quantity", transaction.get("quantity", "")
-                )
-                transaction["product_id"] = body.get(
-                    "product_id", transaction.get("product_id", "")
-                )
-                transaction["product_name"] = body.get(
-                    "product_name", transaction.get("product_name", "")
-                )
-                transaction["payment_method"] = body.get(
-                    "payment_method", transaction.get("payment_method", {})
-                )
-
-                customers_table.update_item(
-                    Key={"customer_id": customer.get("customer_id", "")},
-                    UpdateExpression="SET transactions = :transactions, update_date = :update_date, update_user = :update_user",
-                    ExpressionAttributeValues={
-                        ":transactions": customer.get("transactions", []),
-                        ":update_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        ":update_user": customer.get("email", ""),
-                    },
-                    ReturnValues="UPDATED_NEW",
-                )
-
-                return {
-                    "statusCode": 200,
-                    "headers": {"Access-Control-Allow-Origin": "*"},
-                }
-            else:
-                return {
-                    "statusCode": 404,
-                    "headers": {"Access-Control-Allow-Origin": "*"},
-                    "body": json.dumps({"message": "Transacción no encontrada"}),
-                }
-        else:
-            return {
-                "statusCode": 404,
-                "headers": {"Access-Control-Allow-Origin": "*"},
-                "body": json.dumps({"message": "Cliente no encontrado"}),
-            }
-    except Exception as e:
-        print(json.dumps({"event": "approve_transaction", "Error": str(e)}))
-        return {
-            "statusCode": 500,
-            "headers": {"Access-Control-Allow-Origin": "*"},
-            "body": json.dumps({"message": str(e)}),
-        }
-
-
-def add_transaction(event):
-    try:
-        body = json.loads(event.get("body", "{}"))
-        customer_id = body.get("customer_id", "")
-
-        response = customers_table.get_item(Key={"customer_id": customer_id})
-        if "Item" in response:
-            item = response["Item"]
-
-            customer = {
-                "customer_id": item.get("customer_id", ""),
-                "business_id": item.get("business_id", ""),
-                "given_name": item.get("given_name", ""),
-                "family_name": item.get("family_name", ""),
-                "email": item.get("email", ""),
-                "phone": item.get("phone", ""),
-                "transactions": item.get("transactions", []),
-            }
-            transactions = customer.get("transactions", [])
-
-            transaction_id = str(uuid.uuid4())
-            transactions.append(
-                {
-                    "transaction_id": transaction_id,
-                    "product_id": body.get("product_id", ""),
-                    "product_name": body.get("product_name", ""),
-                    "quantity": body.get("quantity", 1),
-                    "price": Decimal(body.get("price", 0.00)),
-                    "status": "Pendiente de pago",
-                    "accept_terms": True,
-                    "payment_method": body.get("payment_method", {}),
-                    "delivery_day": body.get("delivery_day", ""),
-                    "create_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "create_user": customer.get("email", ""),
-                }
-            )
-            customers_table.update_item(
-                Key={"customer_id": customer.get("customer_id", "")},
-                UpdateExpression="SET transactions = :transactions, update_date = :update_date, update_user = :update_user",
-                ExpressionAttributeValues={
-                    ":transactions": customer.get("transactions", []),
-                    ":update_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    ":update_user": customer.get("email", ""),
-                },
-                ReturnValues="UPDATED_NEW",
-            )
-
-            return {"statusCode": 200, "headers": {"Access-Control-Allow-Origin": "*"}}
-        else:
-            return {
-                "statusCode": 404,
-                "headers": {"Access-Control-Allow-Origin": "*"},
-                "body": json.dumps({"message": "Cliente no encontrado"}),
-            }
-    except Exception as e:
-        print(json.dumps({"event": "approve_transaction", "Error": str(e)}))
-        return {
-            "statusCode": 500,
-            "headers": {"Access-Control-Allow-Origin": "*"},
-            "body": json.dumps({"message": str(e)}),
-        }
+        print(json.dumps({"event": "upload_receipt", "Error": str(e), "trace": traceback.format_exc()}))
+        return _resp(500, {"message": str(e)})
 
 
 def upload_image(file_info, customer_id=None, transaction_id=None):
     try:
-        file_name = (
-            f"customers/{customer_id}_receipt_{transaction_id}{file_info['extension']}"
-        )
+        file_name = f"customers/{customer_id}_receipt_{transaction_id}{file_info['extension']}"
         file_url = f"https://{os.getenv('BUCKET_NAME')}.s3.{os.getenv('AWS_REGION')}.amazonaws.com/{file_name}"
         with io.BytesIO(file_info["content"]) as fileobj:
-            s3.upload_fileobj(
-                Fileobj=fileobj,
-                Bucket=os.getenv("BUCKET_NAME"),
-                Key=file_name,
-                ExtraArgs={"ContentType": file_info["content_type"]},
-            )
-
-        del file_info["content"]
+            s3.upload_fileobj(Fileobj=fileobj, Bucket=os.getenv("BUCKET_NAME"), Key=file_name,
+                              ExtraArgs={"ContentType": file_info["content_type"]})
         return file_url
     except Exception as e:
-        print(
-            json.dumps(
-                {
-                    "event": "upload_image",
-                    "error": str(e),
-                    "trace": traceback.format_exc(),
-                }
-            )
-        )
+        print(json.dumps({"event": "upload_image", "error": str(e), "trace": traceback.format_exc()}))
         return None
 
 
-def delete_transaction(event):
-    """
-    Delete a transaction from a customer by its ID.
-    """
-    try:
-        body = json.loads(event.get("body", "{}"))
-        customer_id = body.get("customer_id", "")
-        transaction_id = body.get("transaction_id", "")
-
-        response = customers_table.get_item(Key={"customer_id": customer_id})
-        if "Item" in response:
-            item = response["Item"]
-            transactions = item.get("transactions", [])
-            transactions = [
-                tran
-                for tran in transactions
-                if tran.get("transaction_id", "") != transaction_id
-            ]
-            customers_table.update_item(
-                Key={"customer_id": customer_id},
-                UpdateExpression="SET transactions = :transactions",
-                ExpressionAttributeValues={":transactions": transactions},
-                ReturnValues="UPDATED_NEW",
-            )
-            return {
-                "statusCode": 200,
-                "headers": {"Access-Control-Allow-Origin": "*"},
-                "body": json.dumps({"message": "Transacción eliminada correctamente"}),
-            }
-        else:
-            return {
-                "statusCode": 404,
-                "headers": {"Access-Control-Allow-Origin": "*"},
-                "body": json.dumps({"message": "Cliente no encontrado"}),
-            }
-    except Exception as e:
-        print(json.dumps({"event": "delete_transaction", "Error": str(e)}))
-        return {
-            "statusCode": 500,
-            "headers": {"Access-Control-Allow-Origin": "*"},
-            "body": json.dumps({"message": str(e)}),
-        }
-
-
-# n8n
-def create_customer_without_transactions_n8n(event):
-    try:
-        return create_customer_without_transactions(event=event)
-    except Exception as e:
-        print(
-            json.dumps(
-                {"event": "create_customer_without_transactions_n8n", "Error": str(e)}
-            )
-        )
-        return {
-            "statusCode": 500,
-            "headers": {"Access-Control-Allow-Origin": "*"},
-            "body": json.dumps({"message": str(e)}),
-        }
-
-
+# ----------------- n8n -----------------
 def add_transaction_n8n(event):
     try:
         body = json.loads(event.get("body", "{}"))
-        customer_id = body.get("customer_id", "")
-        print(customer_id)
-
-        response = customers_table.get_item(Key={"customer_id": customer_id})
-
-        if "Item" in response:
-            item = response["Item"]
-
-            customer = {
-                "customer_id": item.get("customer_id", ""),
-                "business_id": item.get("business_id", ""),
-                "given_name": item.get("given_name", ""),
-                "family_name": item.get("family_name", ""),
-                "email": item.get("email", ""),
-                "phone": item.get("phone", ""),
-                "transactions": item.get("transactions", []),
-            }
-            transactions = customer.get("transactions", [])
-
-            transaction_id = str(uuid.uuid4())
-            transactions.append(
-                {
-                    "transaction_id": transaction_id,
-                    "product_id": body.get("product_id", ""),
-                    "product_name": body.get("product_name", ""),
-                    "quantity": body.get("quantity", 1),
-                    "price": Decimal(body.get("price", 0.00)),
-                    "status": "Pendiente de pago",
-                    "accept_terms": True,
-                    "payment_method": body.get("payment_method", {}),
-                    "delivery_day": body.get("delivery_day", ""),
-                    "create_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "create_user": customer.get("email", ""),
-                }
-            )
-            customers_table.update_item(
-                Key={"customer_id": customer.get("customer_id", "")},
-                UpdateExpression="SET transactions = :transactions, update_date = :update_date, update_user = :update_user",
-                ExpressionAttributeValues={
-                    ":transactions": customer.get("transactions", []),
-                    ":update_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    ":update_user": customer.get("email", ""),
-                },
-                ReturnValues="UPDATED_NEW",
-            )
-            return {
-                "statusCode": 200,  # No uses 204
-                "headers": {
-                    "Access-Control-Allow-Origin": "*",
-                    "Access-Control-Allow-Headers": "*",
-                    "Access-Control-Allow-Methods": "*",
-                },
-                "body": json.dumps(customer, default=str),
-            }
-        else:
-            return {
-                "statusCode": 404,
-                "headers": {"Access-Control-Allow-Origin": "*"},
-                "body": json.dumps({"message": "Cliente no encontrado"}),
-            }
+        customer = _get_customer(body.get("customer_id", ""))
+        if not customer:
+            return _resp(404, {"message": "Cliente no encontrado"})
+        transactions = customer.get("transactions", [])
+        transactions.append({
+            "transaction_id": str(uuid.uuid4()),
+            "product_id": body.get("product_id", ""),
+            "product_name": body.get("product_name", ""),
+            "quantity": body.get("quantity", 1),
+            "price": Decimal(str(body.get("price", 0) or 0)),
+            "status": "Pendiente de pago",
+            "accept_terms": True,
+            "payment_method": body.get("payment_method", {}),
+            "delivery_day": body.get("delivery_day", ""),
+            "locality": body.get("locality", ""),
+            "create_date": _now(),
+            "create_user": customer.get("email", ""),
+        })
+        _save_transactions(customer["customer_id"], transactions, customer.get("email", ""))
+        return _resp(200, _map_customer(_get_customer(customer["customer_id"])))
     except Exception as e:
-        print(json.dumps({"event": "approve_transaction", "Error": str(e)}))
-        return {
-            "statusCode": 500,
-            "headers": {"Access-Control-Allow-Origin": "*"},
-            "body": json.dumps({"message": str(e)}),
-        }
+        print(json.dumps({"event": "add_transaction_n8n", "Error": str(e)}))
+        return _resp(500, {"message": str(e)})
 
 
 def get_customer_transaction_n8n(transaction_id, customer_id):
     try:
-        response = customers_table.get_item(Key={"customer_id": customer_id})
-        if "Item" in response:
-            item = response["Item"]
-            business = business_table.get_item(
-                Key={"business_id": item.get("business_id", "")}
-            )
-
-            customer = {
-                "customer_id": item.get("customer_id", ""),
-                "business_id": item.get("business_id", ""),
-                "business_logo_url": business.get("Item", {}).get(
-                    "business_logo_url", ""
-                ),
-                "given_name": item.get("given_name", ""),
-                "family_name": item.get("family_name", ""),
-                "email": item.get("email", ""),
-                "phone": item.get("phone", ""),
-                "age": int(item.get("age", 0)),
-                "delivery_day": item.get("delivery_day", ""),
-                "transactions": item.get("transactions", []),
-            }
-            if customer and "transactions" in customer:
-                transaction = {}
-                for tran in customer.get("transactions", []):
-                    if tran.get("transaction_id", "") == transaction_id:
-                        transaction = tran
-                        break
-
-                if transaction:
-                    return {
-                        "statusCode": 200,
-                        "headers": {"Access-Control-Allow-Origin": "*"},
-                        "body": json.dumps(transaction, default=str),
-                    }
-            else:
-                return {
-                    "statusCode": 404,
-                    "headers": {"Access-Control-Allow-Origin": "*"},
-                    "body": json.dumps({"message": "Transacción no encontrada"}),
-                }
-        else:
-            return {
-                "statusCode": 404,
-                "headers": {"Access-Control-Allow-Origin": "*"},
-                "body": json.dumps({"message": "Cliente no encontrado"}),
-            }
+        item = _get_customer(customer_id)
+        if not item:
+            return _resp(404, {"message": "Cliente no encontrado"})
+        tx = _find_transaction(item.get("transactions", []), transaction_id)
+        if not tx:
+            return _resp(404, {"message": "Transacción no encontrada"})
+        return _resp(200, tx)
     except Exception as e:
-        print(json.dumps({"event": "get_customer_transaction", "Error": str(e)}))
-        return {
-            "statusCode": 500,
-            "headers": {"Access-Control-Allow-Origin": "*"},
-            "body": json.dumps({"message": str(e)}),
-        }
+        print(json.dumps({"event": "get_customer_transaction_n8n", "Error": str(e)}))
+        return _resp(500, {"message": str(e)})

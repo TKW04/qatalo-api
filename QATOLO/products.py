@@ -1,4 +1,4 @@
-import base64
+
 from decimal import Decimal
 import io
 import os
@@ -7,8 +7,6 @@ import traceback
 import boto3
 import json
 import uuid
-
-from requests_toolbelt.multipart import decoder
 from boto3.dynamodb.conditions import Attr
 from datetime import datetime
 
@@ -119,6 +117,7 @@ def get_products_by_user_id(user_id: str):
                         else False
                     ),
                     "delivery_start_day": item.get("delivery_start_day", ""),
+                    "localities": item.get("localities", []) or [],
                 }
             )
         return {
@@ -194,6 +193,7 @@ def get_products_by_business_id(business_id: str):
                         else False
                     ),
                     "delivery_start_day": item.get("delivery_start_day", ""),
+                    "localities": item.get("localities", []) or [],
                     "place": item.get("place", ""),
                 }
             )
@@ -215,205 +215,85 @@ def get_products_by_business_id(business_id: str):
         }
 
 
+def _resp(status, body):
+    return {"statusCode": status, "headers": {"Access-Control-Allow-Origin": "*"}, "body": json.dumps(body, default=str)}
+
 def create_product(event, user_name, user_id):
-    """
-    Create a new product.
-    """
     try:
-
-        # Paso 1: Decodificar el body de base64
-        body_bytes = base64.b64decode(event["body"])
-        # Paso 2: Obtener content-type (con boundary)
-        content_type = event["headers"].get("content-type") or event["headers"].get(
-            "Content-Type"
-        )
-        # Paso 3: Parsear multipart
-        multipart_data = decoder.MultipartDecoder(body_bytes, content_type)
-        file_infos = []  # Para múltiples archivos
-        product_create = {}
-
-        for part in multipart_data.parts:
-            headers = part.headers[b"Content-Disposition"].decode()
-            name = headers.split('name="')[1].split('"')[0]
-
-            if "filename=" in headers:
-                original_filename = headers.split('filename="')[1].split('"')[0]
-                if original_filename and len(part.content) > 0:
-                    extension = os.path.splitext(original_filename)[1].lower()
-                    part_content_type = part.headers.get(
-                        b"Content-Type", b"application/octet-stream"
-                    ).decode()
-                    file_infos.append(
-                        {
-                            "field_name": name,
-                            "original_filename": original_filename,
-                            "content": part.content,
-                            "extension": extension,
-                            "content_type": part_content_type,
-                        }
-                    )
-            else:
-                product_create[name] = part.text
-
+        data = json.loads(event.get("body", "{}"))
         product_id = str(uuid.uuid4())
-
-        if file_infos:
-            images = []
-            for file_info in file_infos:
-                images.append(
-                    upload_image(
-                        file_info=file_info,
-                        user_id=user_id,
-                        type_file=str(uuid.uuid4()),
-                        product_id=product_id,
-                    )
-                )
-            product_create["imagesUrl"] = images if images else []
-
-        products_table.put_item(
-            Item={
-                "product_id": product_id,
-                "business_id": product_create.get("business_id", ""),
-                "product_name": product_create.get("name", ""),
-                "description": product_create.get("description", ""),
-                "price": Decimal(product_create.get("price", 0.00)),
-                "quantity": int(product_create.get("quantity", 0)),
-                "orden": product_create.get("orden", 0),
-                "just_one": product_create.get("just_one", False),
-                "terms": product_create.get("terms", ""),
-                "show_quantity": product_create.get("show_quantity", False),
-                "currency": product_create.get("currency", ""),
-                "imagesUrl": product_create.get("imagesUrl", []),
-                "category_id": product_create.get("category_id", ""),
-                "is_available": product_create.get("is_available", "unavailable"),
-                "min_age_allow": product_create.get("min_age_allow", False),
-                "min_age": int(product_create.get("min_age", 0)),
-                "required_delivery_day": product_create.get(
-                    "required_delivery_day", False
-                ),
-                "delivery_start_day": product_create.get("delivery_start_day", ""),
-                "user_id": user_id,
-                "create_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "create_user": user_name,
-                "update_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "update_user": user_name,
-            }
-        )
-        return {
-            "statusCode": 200,
-            "headers": {"Access-Control-Allow-Origin": "*"},
-            "body": json.dumps({"message": "Categoría creada correctamente"}),
-        }
+        products_table.put_item(Item={
+            "product_id": product_id,
+            "business_id": data.get("business_id", ""),
+            "product_name": data.get("name", ""),
+            "description": data.get("description", ""),
+            "price": Decimal(str(data.get("price", 0) or 0)),
+            "quantity": int(data.get("quantity", 0) or 0),
+            "orden": int(data.get("orden", 0) or 0),
+            "just_one": bool(data.get("just_one", False)),
+            "terms": data.get("terms", ""),
+            "show_quantity": bool(data.get("show_quantity", False)),
+            "currency": data.get("currency", ""),
+            "imagesUrl": data.get("imagesUrl", []),
+            "category_id": data.get("category_id", ""),
+            "is_available": data.get("is_available", "unavailable"),
+            "min_age_allow": bool(data.get("min_age_allow", False)),
+            "min_age": int(data.get("min_age", 0) or 0),
+            "required_delivery_day": bool(data.get("required_delivery_day", False)),
+            "delivery_start_day": data.get("delivery_start_day", ""),
+            "localities": data.get("localities", []) or [],
+            "user_id": user_id,
+            "create_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "create_user": user_name,
+            "update_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "update_user": user_name,
+        })
+        return _resp(200, {"message": "Producto creado correctamente"})
     except Exception as e:
         print(json.dumps({"event": "create_product", "Error": str(e)}))
-        return {
-            "statusCode": 500,
-            "headers": {"Access-Control-Allow-Origin": "*"},
-            "body": json.dumps({"message": str(e)}),
-        }
+        return _resp(500, {"message": str(e)})
 
 
 def update_product(event, user_name, product_id, user_id):
-    """
-    Update an existing product.
-    """
     try:
-        # Paso 1: Decodificar el body de base64
-        body_bytes = base64.b64decode(event["body"])
-        # Paso 2: Obtener content-type (con boundary)
-        content_type = event["headers"].get("content-type") or event["headers"].get(
-            "Content-Type"
-        )
-        # Paso 3: Parsear multipart
-        multipart_data = decoder.MultipartDecoder(body_bytes, content_type)
-        file_infos = []  # Para múltiples archivos
-        product_update = {}
-
-        for part in multipart_data.parts:
-            headers = part.headers[b"Content-Disposition"].decode()
-            name = headers.split('name="')[1].split('"')[0]
-
-            if "filename=" in headers:
-                original_filename = headers.split('filename="')[1].split('"')[0]
-                if original_filename and len(part.content) > 0:
-                    extension = os.path.splitext(original_filename)[1].lower()
-                    part_content_type = part.headers.get(
-                        b"Content-Type", b"application/octet-stream"
-                    ).decode()
-                    file_infos.append(
-                        {
-                            "field_name": name,
-                            "original_filename": original_filename,
-                            "content": part.content,
-                            "extension": extension,
-                            "content_type": part_content_type,
-                        }
-                    )
-            else:
-                product_update[name] = part.text
-
-        response = products_table.get_item(Key={"product_id": product_id})
-        imagesUrl = []
-        if "Item" in response:
-            imagesUrl = response["Item"].get("imagesUrl", [])
-        images = []
-        for image in imagesUrl:
-            images.append(image)
-
-        if file_infos:
-            for file_info in file_infos:
-                images.append(
-                    upload_image(
-                        file_info=file_info,
-                        user_id=user_id,
-                        type_file=str(uuid.uuid4()),
-                        product_id=product_id,
-                    )
-                )
-
+        data = json.loads(event.get("body", "{}"))
         products_table.update_item(
             Key={"product_id": product_id},
-            UpdateExpression="SET product_name = :product_name, description = :description, price = :price, quantity = :quantity, orden = :orden, just_one = :just_one, show_quantity = :show_quantity, terms = :terms, min_age_allow = :min_age_allow, min_age = :min_age, required_delivery_day = :required_delivery_day, delivery_start_day = :delivery_start_day, currency = :currency, imagesUrl = :imagesUrl, category_id = :category_id, is_available = :is_available, user_id = :user_id, update_date = :update_date, update_user = :update_user",
+            UpdateExpression=(
+                "SET product_name=:n, description=:d, price=:p, quantity=:q, orden=:o, "
+                "just_one=:j, show_quantity=:sq, terms=:t, min_age_allow=:ma, min_age=:mage, "
+                "required_delivery_day=:rdd, delivery_start_day=:dsd, currency=:c, "
+                "imagesUrl=:img, category_id=:cat, is_available=:av, localities=:loc, "
+                "user_id=:uid, update_date=:ud, update_user=:uu"
+            ),
             ExpressionAttributeValues={
-                ":description": product_update.get("description", ""),
-                ":product_name": product_update.get("name", ""),
-                ":price": product_update.get("price", 0.0),
-                ":quantity": product_update.get("quantity", 0),
-                ":orden": product_update.get("orden", 0),
-                ":just_one": product_update.get("just_one", False),
-                ":show_quantity": product_update.get("show_quantity", False),
-                ":terms": product_update.get("terms", ""),
-                ":min_age_allow": product_update.get("min_age_allow", False),
-                ":min_age": int(product_update.get("min_age", 0)),
-                ":currency": product_update.get("currency", ""),
-                ":imagesUrl": images,
-                ":category_id": product_update.get("category_id", ""),
-                ":is_available": product_update.get("is_available", "unavailable"),
-                ":required_delivery_day": product_update.get(
-                    "required_delivery_day", False
-                ),
-                ":delivery_start_day": product_update.get("delivery_start_day", ""),
-                ":user_id": user_id,
-                ":update_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                ":update_user": user_name,
+                ":n": data.get("name", ""),
+                ":d": data.get("description", ""),
+                ":p": Decimal(str(data.get("price", 0) or 0)),
+                ":q": int(data.get("quantity", 0) or 0),
+                ":o": int(data.get("orden", 0) or 0),
+                ":j": bool(data.get("just_one", False)),
+                ":sq": bool(data.get("show_quantity", False)),
+                ":t": data.get("terms", ""),
+                ":ma": bool(data.get("min_age_allow", False)),
+                ":mage": int(data.get("min_age", 0) or 0),
+                ":rdd": bool(data.get("required_delivery_day", False)),
+                ":dsd": data.get("delivery_start_day", ""),
+                ":c": data.get("currency", ""),
+                ":img": data.get("imagesUrl", []),
+                ":cat": data.get("category_id", ""),
+                ":av": data.get("is_available", "unavailable"),
+                ":loc": data.get("localities", []) or [],
+                ":uid": user_id,
+                ":ud": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                ":uu": user_name,
             },
             ReturnValues="UPDATED_NEW",
         )
-        return {
-            "statusCode": 200,
-            "headers": {"Access-Control-Allow-Origin": "*"},
-            "body": json.dumps({"message": "Categoría actualizada correctamente"}),
-        }
-
+        return _resp(200, {"message": "Producto actualizado correctamente"})
     except Exception as e:
-        print(json.dumps({"event": "create_member", "Error": str(e)}))
-        return {
-            "statusCode": 500,
-            "headers": {"Access-Control-Allow-Origin": "*"},
-            "body": json.dumps({"message": str(e)}),
-        }
-
-
+        print(json.dumps({"event": "update_product", "Error": str(e)}))
+        return _resp(500, {"message": str(e)})
 def delete_product_image(event):
     try:
         body = json.loads(event.get("body", "{}"))
