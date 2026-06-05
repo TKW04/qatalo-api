@@ -243,6 +243,48 @@ def _public_customer(item, business):
     data["business_phone"] = (business or {}).get("business_phone", "")
     return data
 
+#
+def _group_members(transactions, tx):
+    """Todas las transacciones del mismo order_group; si no tiene, solo ella (órdenes viejas)."""
+    g = tx.get("order_group")
+    if not g:
+        return [tx]
+    return [t for t in transactions if t.get("order_group") == g]
+
+
+def _group_total(members):
+    total = Decimal("0")
+    for m in members:
+        total += Decimal(str(m.get("price", 0) or 0)) * int(m.get("quantity", 1) or 1)
+    return total
+
+
+def _group_summary_name(members):
+    if len(members) == 1:
+        return members[0].get("product_name", "")
+    return ", ".join(f"{m.get('product_name', '')} (x{m.get('quantity', 1)})" for m in members)
+
+
+def _order_details_group(business, members, owner_email, customer_name="", **extra):
+    ref = members[0] if members else {}
+    details = {
+        "business_name": business.get("business_name", "Qatalo"),
+        "business_logo_url": business.get("business_logo_url", ""),
+        "transaction_id": ref.get("order_group") or ref.get("transaction_id", ""),
+        "order_date": ref.get("create_date", _now()),
+        "product_name": _group_summary_name(members),
+        "quantity": sum(int(m.get("quantity", 1) or 1) for m in members),
+        "total_amount": str(_group_total(members)),
+        "currency": (ref.get("payment_method", {}) or {}).get("currency", ""),
+        "business_email": owner_email or "Qatalo",
+        "business_phone": business.get("business_phone", "Qatalo"),
+        "customer_name": customer_name,
+    }
+    details.update(extra)
+    return details
+
+
+
 # ----------------- Router -----------------
 def customers_routes(path, method, event, user_name, user_id, alias):
     # --- Acceso del cliente final (OTP + token) ---
@@ -260,6 +302,10 @@ def customers_routes(path, method, event, user_name, user_id, alias):
         return presign_receipt(event)
     if path == f"/{alias}/customers/orders/receipt" and method == "POST":
         return save_receipt_by_token(event)
+    if path == f"/{alias}/customers/orders/cart" and method == "POST":
+        return checkout_cart_by_token(event)
+    if path == f"/{alias}/customers/cart" and method == "POST":
+        return create_customer_cart(event)
 
     # Públicos (catálogo / cliente)
     if path == f"/{alias}/customers" and method == "POST":
@@ -417,7 +463,7 @@ def create_customer(event):
             )
             owner_details = {**customer_details, "upload_link": f"{FRONT_END_URL}/admin"}
             new_order_create_email(owner_email or "Qatalo", to_name=business.get("business_name", "Qatalo"), order_details=owner_details)
-            return order_create_email(email, to_name=customer_details["customer_name"], order_details=customer_details)
+            order_create_email(email, to_name=customer_details["customer_name"], order_details=customer_details)
         except Exception as notify_err:
             print(json.dumps({"event": "create_customer.notify", "Error": str(notify_err)}))
         return _resp(200, {"message": "Orden creada", "customer_id": customer_id})
@@ -467,12 +513,86 @@ def create_customer_transaction(body):
             )
             owner_details = {**customer_details, "upload_link": f"{FRONT_END_URL}/admin"}
             new_order_create_email(owner_email or "Qatalo", to_name=business.get("business_name", "Qatalo"), order_details=owner_details)
-            return order_create_email(body.get("email"), to_name=customer_details["customer_name"], order_details=customer_details)
+            order_create_email(body.get("email"), to_name=customer_details["customer_name"], order_details=customer_details)
         except Exception as notify_err:
             print(json.dumps({"event": "create_customer_transaction.notify", "Error": str(notify_err)}))
         return _resp(200, {"message": "Orden creada", "customer_id": customer_id})
     except Exception as e:
         print(json.dumps({"event": "create_customer_transaction", "Error": str(e)}))
+        return _resp(500, {"message": str(e)})
+
+def create_customer_cart(event):
+    try:
+        body = json.loads(event.get("body", "{}"))
+        business_id = body.get("business_id", "")
+        email = body.get("email", "").strip()
+        items = body.get("items", []) or []
+        pm = body.get("payment_method", {}) or {}
+        if not items:
+            return _resp(400, {"message": "El carrito está vacío"})
+        payment_method = payment_methods_table.get_item(
+            Key={"payment_method_id": pm.get("payment_method_id", "")}
+        ).get("Item", {})
+
+        order_group = str(uuid.uuid4())
+        now = _now()
+        new_txs = [{
+            "transaction_id": str(uuid.uuid4()),
+            "order_group": order_group,
+            "product_id": it.get("product_id", ""),
+            "product_name": it.get("product_name", ""),
+            "quantity": it.get("quantity", 1),
+            "price": Decimal(str(it.get("price", 0) or 0)),
+            "status": "Pendiente de pago",
+            "accept_terms": it.get("accept_terms", True),
+            "payment_method": payment_method,
+            "delivery_day": it.get("delivery_day", ""),
+            "locality": it.get("locality", ""),
+            "create_date": now,
+            "create_user": email,
+        } for it in items]
+
+        existing = _find_customer_by_email(business_id, email)
+        if existing:
+            customer_id = existing["customer_id"]
+            transactions = existing.get("transactions", []) + new_txs
+            customers_table.update_item(
+                Key={"customer_id": customer_id},
+                UpdateExpression="SET given_name=:g, family_name=:f, email=:e, phone=:p, age=:a, transactions=:t, update_date=:ud, update_user=:uu",
+                ExpressionAttributeValues={
+                    ":g": body.get("given_name", ""), ":f": body.get("family_name", ""),
+                    ":e": email, ":p": body.get("phone", ""), ":a": int(body.get("age", 0) or 0),
+                    ":t": transactions, ":ud": now, ":uu": email,
+                },
+            )
+        else:
+            customer_id = str(uuid.uuid4())
+            customers_table.put_item(Item={
+                "customer_id": customer_id, "business_id": business_id,
+                "given_name": body.get("given_name", ""), "family_name": body.get("family_name", ""),
+                "email": email, "phone": body.get("phone", ""), "age": int(body.get("age", 0) or 0),
+                "transactions": new_txs, "create_date": now, "create_user": email,
+                "update_date": now, "update_user": email,
+            })
+
+        try:
+            business = _get_business(business_id) or {}
+            owner_email = _owner_email(business)
+            magic = _customer_magic_link(business, customer_id, business_id, email)
+            customer_details = _order_details_group(
+                business, new_txs, owner_email,
+                customer_name=f"{body.get('given_name', '')} {body.get('family_name', '')}",
+                upload_link=magic,
+            )
+            owner_details = {**customer_details, "upload_link": f"{FRONT_END_URL}/admin"}
+            new_order_create_email(owner_email or "Qatalo", to_name=business.get("business_name", "Qatalo"), order_details=owner_details)
+            order_create_email(email, to_name=customer_details["customer_name"], order_details=customer_details)
+        except Exception as mail_err:
+            print(json.dumps({"event": "create_customer_cart.email", "Error": str(mail_err)}))
+
+        return _resp(200, {"message": "Orden creada", "customer_id": customer_id, "order_group": order_group})
+    except Exception as e:
+        print(json.dumps({"event": "create_customer_cart", "Error": str(e)}))
         return _resp(500, {"message": str(e)})
 
 def create_customer_without_transactions(event):
@@ -549,19 +669,25 @@ def approve_transaction(event, user_id=None):
         tx = _find_transaction(transactions, body.get("transaction_id", ""))
         if not tx:
             return _resp(404, {"message": "Transacción no encontrada"})
-        if tx.get("status") == "Aprobada":
-            return _resp(200, {"message": "La transacción ya estaba aprobada"})
-        tx["status"] = "Aprobada"
+        
+        members = _group_members(transactions, tx)
+        for m in members:
+            if m.get("status") != "Aprobada":
+                m["status"] = "Aprobada"
+                _adjust_stock(m.get("product_id", ""), -int(m.get("quantity", 1) or 1), customer.get("email", ""))
         _save_transactions(customer["customer_id"], transactions, customer.get("email", ""))
-        _adjust_stock(tx.get("product_id", ""), -int(tx.get("quantity", 1) or 1), customer.get("email", ""))
         business = _get_business(customer.get("business_id", "")) or {}
         owner_email = _owner_email(business)
         _notify_n8n(customer.get("phone", ""), tx.get("transaction_id", ""), "Aprobada")
-        return order_verified_email(
-            customer.get("email"),
-            to_name=f"{customer.get('given_name')} {customer.get('family_name')}",
-            order_details=_order_details(business, tx, owner_email, business_website_url=_catalog_url(business)),
-        )
+        try:
+            order_verified_email(
+                customer.get("email"),
+                to_name=f"{customer.get('given_name')} {customer.get('family_name')}",
+                order_details=_order_details_group(business, members, owner_email, business_website_url=_catalog_url(business)),
+            )
+        except Exception as mail_err:
+            print(json.dumps({"event": "approve_transaction.email", "Error": str(mail_err)}))
+        return _resp(200, {"message": "Transacción aprobada"})
     except Exception as e:
         print(json.dumps({"event": "approve_transaction", "Error": str(e)}))
         return _resp(500, {"message": str(e)})
@@ -579,15 +705,21 @@ def delivered_transaction(event, user_id=None):
         tx = _find_transaction(transactions, body.get("transaction_id", ""))
         if not tx:
             return _resp(404, {"message": "Transacción no encontrada"})
-        tx["status"] = "Entregada"  # el stock ya se descontó al aprobar
+        members = _group_members(transactions, tx)
+        for m in members:
+            m["status"] = "Entregada"
         _save_transactions(customer["customer_id"], transactions, customer.get("email", ""))
         business = _get_business(customer.get("business_id", "")) or {}
         owner_email = _owner_email(business)
-        return order_delivered_email(
-            customer.get("email"),
-            to_name=f"{customer.get('given_name')} {customer.get('family_name')}",
-            order_details=_order_details(business, tx, owner_email, business_website_url=_catalog_url(business)),
-        )
+        try:
+            order_delivered_email(
+                customer.get("email"),
+                to_name=f"{customer.get('given_name')} {customer.get('family_name')}",
+                order_details=_order_details_group(business, members, owner_email, business_website_url=_catalog_url(business)),
+            )
+        except Exception as mail_err:
+            print(json.dumps({"event": "delivered_transaction.email", "Error": str(mail_err)}))
+        return _resp(200, {"message": "Transacción entregada"})
     except Exception as e:
         print(json.dumps({"event": "delivered_transaction", "Error": str(e)}))
         return _resp(500, {"message": str(e)})
@@ -605,24 +737,31 @@ def cancel_transaction(event, user_id=None):
         tx = _find_transaction(transactions, body.get("transaction_id", ""))
         if not tx:
             return _resp(404, {"message": "Transacción no encontrada"})
-        prev_status = tx.get("status")
-        tx["status"] = "Cancelada"
-        tx["cancellation_reason"] = body.get("cancellation_reason", "No especificada")
+        
+        members = _group_members(transactions, tx)
+        reason = body.get("cancellation_reason", "No especificada")
+        for m in members:
+            prev = m.get("status")
+            m["status"] = "Cancelada"
+            m["cancellation_reason"] = reason
+            if prev in ("Aprobada", "Entregada"):
+                _adjust_stock(m.get("product_id", ""), int(m.get("quantity", 1) or 1), customer.get("email", ""))
         _save_transactions(customer["customer_id"], transactions, customer.get("email", ""))
-        if prev_status in ("Aprobada", "Entregada"):  # restaurar stock que se había descontado
-            _adjust_stock(tx.get("product_id", ""), int(tx.get("quantity", 1) or 1), customer.get("email", ""))
         business = _get_business(customer.get("business_id", "")) or {}
         owner_email = _owner_email(business)
-        return order_cancel_email(
-            customer.get("email"),
-            to_name=f"{customer.get('given_name')} {customer.get('family_name')}",
-            order_details=_order_details(
-                business, tx, owner_email,
-                cancellation_date=_now(),
-                cancellation_reason=tx["cancellation_reason"],
-                business_website_url=_catalog_url(business),
-            ),
-        )
+        try:
+            order_cancel_email(
+                customer.get("email"),
+                to_name=f"{customer.get('given_name', '')} {customer.get('family_name', '')}",
+                order_details=_order_details_group(
+                    business, members, owner_email,
+                    cancellation_date=_now(), cancellation_reason=reason,
+                    business_website_url=_catalog_url(business),
+                ),
+            )
+        except Exception as mail_err:
+            print(json.dumps({"event": "cancel_transaction.email", "Error": str(mail_err)}))
+        return _resp(200, {"message": "Transacción cancelada"})
     except Exception as e:
         print(json.dumps({"event": "cancel_transaction", "Error": str(e)}))
         return _resp(500, {"message": str(e)})
@@ -736,21 +875,27 @@ def upload_receipt(event):
         tx = _find_transaction(transactions, transaction_id)
         if not tx:
             return _resp(404, {"message": "Transacción no encontrada"})
-        tx["receipt_url"] = receipt_url
-        tx["status"] = "Pendiente de validación"
-        tx["amount_paid"] = fields.get("amount_paid", "")
-        tx["destiny_account"] = fields.get("destiny_account", "")
-        tx["transfer_date"] = fields.get("transfer_date", "")
-        tx["reference"] = fields.get("reference", "")
-        _save_transactions(customer_id, transactions, customer.get("email", ""))
+        members = _group_members(transactions, tx)
+        for m in members:
+            m["receipt_url"] = receipt_url
+            m["status"] = "Pendiente de validación"
+            m["amount_paid"] = fields.get("amount_paid", "")
+            m["destiny_account"] = fields.get("destiny_account", "")
+            m["transfer_date"] = fields.get("transfer_date", "")
+            m["reference"] = fields.get("reference", "")
+        _save_transactions(customer["customer_id"], transactions, customer.get("email", ""))
 
         business = _get_business(customer.get("business_id", "")) or {}
         owner_email = _owner_email(business)
-        return order_receipt_email(
-            customer.get("email"),
-            to_name=f"{customer.get('given_name')} {customer.get('family_name')}",
-            order_details=_order_details(business, tx, owner_email, business_website_url=_catalog_url(business)),
-        )
+        try:
+            order_receipt_email(
+                customer.get("email"),
+                to_name=f"{customer.get('given_name')} {customer.get('family_name')}",
+                order_details=_order_details_group(business, members, owner_email, business_website_url=_catalog_url(business)),
+            )
+        except Exception as mail_err:
+            print(json.dumps({"event": "upload_receipt.email", "Error": str(mail_err)}))
+        return _resp(200, {"message": "Comprobante recibido"})
     except Exception as e:
         print(json.dumps({"event": "upload_receipt", "Error": str(e), "trace": traceback.format_exc()}))
         return _resp(500, {"message": str(e)})
@@ -958,6 +1103,60 @@ def add_transaction_by_token(event):
         print(json.dumps({"event": "add_transaction_by_token", "Error": str(e)}))
         return _resp(500, {"message": str(e)})
 
+def checkout_cart_by_token(event):
+    try:
+        customer, business, err = _auth_customer(event)
+        if err:
+            return err
+        body = json.loads(event.get("body", "{}"))
+        items = body.get("items", []) or []
+        pm = body.get("payment_method", {}) or {}
+        if not items:
+            return _resp(400, {"message": "El carrito está vacío"})
+        payment_method = payment_methods_table.get_item(
+            Key={"payment_method_id": pm.get("payment_method_id", "")}
+        ).get("Item", {})
+
+        order_group = str(uuid.uuid4())
+        now = _now()
+        transactions = customer.get("transactions", [])
+        new_txs = [{
+            "transaction_id": str(uuid.uuid4()),
+            "order_group": order_group,
+            "product_id": it.get("product_id", ""),
+            "product_name": it.get("product_name", ""),
+            "quantity": it.get("quantity", 1),
+            "price": Decimal(str(it.get("price", 0) or 0)),
+            "status": "Pendiente de pago",
+            "accept_terms": it.get("accept_terms", True),
+            "payment_method": payment_method,
+            "delivery_day": it.get("delivery_day", ""),
+            "locality": it.get("locality", ""),
+            "create_date": now,
+            "create_user": customer.get("email", ""),
+        } for it in items]
+        transactions.extend(new_txs)
+        _save_transactions(customer["customer_id"], transactions, customer.get("email", ""))
+
+        try:
+            owner_email = _owner_email(business)
+            magic = _customer_magic_link(business, customer["customer_id"], customer["business_id"], customer.get("email", ""))
+            customer_details = _order_details_group(
+                business, new_txs, owner_email,
+                customer_name=f"{customer.get('given_name', '')} {customer.get('family_name', '')}",
+                upload_link=magic,
+            )
+            owner_details = {**customer_details, "upload_link": f"{FRONT_END_URL}/admin"}
+            new_order_create_email(owner_email or "Qatalo", to_name=business.get("business_name", "Qatalo"), order_details=owner_details)
+            order_create_email(customer.get("email"), to_name=customer_details["customer_name"], order_details=customer_details)
+        except Exception as mail_err:
+            print(json.dumps({"event": "checkout_cart_by_token.email", "Error": str(mail_err)}))
+
+        return _resp(200, {"message": "Orden creada", "order_group": order_group})
+    except Exception as e:
+        print(json.dumps({"event": "checkout_cart_by_token", "Error": str(e)}))
+        return _resp(500, {"message": str(e)})
+
 def cancel_order_by_token(event):
     try:
         customer, business, err = _auth_customer(event)
@@ -969,29 +1168,26 @@ def cancel_order_by_token(event):
         if not tx:
             return _resp(404, {"message": "Transacción no encontrada"})
 
-        prev_status = tx.get("status")
-        tx["status"] = "Cancelada"
-        tx["cancellation_reason"] = body.get("cancellation_reason", "Cancelada por el cliente")
+        members = _group_members(transactions, tx)
+        reason = body.get("cancellation_reason", "No especificada")  # cliente: "Cancelada por el cliente"
+        for m in members:
+            prev = m.get("status")
+            m["status"] = "Cancelada"
+            m["cancellation_reason"] = reason
+            if prev in ("Aprobada", "Entregada"):
+                _adjust_stock(m.get("product_id", ""), int(m.get("quantity", 1) or 1), customer.get("email", ""))
         _save_transactions(customer["customer_id"], transactions, customer.get("email", ""))
-        if prev_status in ("Aprobada", "Entregada"):
-            _adjust_stock(tx.get("product_id", ""), int(tx.get("quantity", 1) or 1), customer.get("email", ""))
-
-        try:
-            owner_email = _owner_email(business)
-            order_cancel_email(
-                customer.get("email"),
-                to_name=f"{customer.get('given_name', '')} {customer.get('family_name', '')}",
-                order_details=_order_details(
-                    business, tx, owner_email,
-                    cancellation_date=_now(),
-                    cancellation_reason=tx["cancellation_reason"],
-                    business_website_url=_catalog_url(business),
-                ),
-            )
-        except Exception as mail_err:
-            print(json.dumps({"event": "cancel_order_by_token.email", "Error": str(mail_err)}))
-
-        return _resp(200, {"message": "Orden cancelada"})
+        business = _get_business(customer.get("business_id", "")) or {}
+        owner_email = _owner_email(business)
+        return order_cancel_email(
+            customer.get("email"),
+            to_name=f"{customer.get('given_name', '')} {customer.get('family_name', '')}",
+            order_details=_order_details_group(
+                business, members, owner_email,
+                cancellation_date=_now(), cancellation_reason=reason,
+                business_website_url=_catalog_url(business),
+            ),
+        )
     except Exception as e:
         print(json.dumps({"event": "cancel_order_by_token", "Error": str(e)}))
         return _resp(500, {"message": str(e)})
@@ -1034,21 +1230,20 @@ def save_receipt_by_token(event):
         if not tx:
             return _resp(404, {"message": "Transacción no encontrada"})
 
-        tx["receipt_url"] = body.get("receipt_url", "")
-        tx["status"] = "Pendiente de validación"
-        tx["amount_paid"] = body.get("amount_paid", "")
-        tx["destiny_account"] = body.get("destiny_account", "")
-        tx["transfer_date"] = body.get("transfer_date", "")
-        tx["reference"] = body.get("reference", "")
+        members = _group_members(transactions, tx)
+        for m in members:
+            m["receipt_url"] = body.get("receipt_url", "")   # en upload_receipt: receipt_url / fields.get(...)
+            m["status"] = "Pendiente de validación"
+            m["amount_paid"] = body.get("amount_paid", "")
+            m["destiny_account"] = body.get("destiny_account", "")
+            m["transfer_date"] = body.get("transfer_date", "")
+            m["reference"] = body.get("reference", "")
         _save_transactions(customer["customer_id"], transactions, customer.get("email", ""))
 
         try:
             owner_email = _owner_email(business)
-            order_receipt_email(
-                customer.get("email"),
-                to_name=f"{customer.get('given_name', '')} {customer.get('family_name', '')}",
-                order_details=_order_details(business, tx, owner_email, business_website_url=_catalog_url(business)),
-            )
+            order_details=_order_details_group(business, members, owner_email, business_website_url=_catalog_url(business)),
+
         except Exception as mail_err:
             print(json.dumps({"event": "save_receipt_by_token.email", "Error": str(mail_err)}))
 

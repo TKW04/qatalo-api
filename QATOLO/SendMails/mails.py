@@ -44,7 +44,6 @@ def send_forgot_password_email(to_address, to_name, resetLink):
             'body': json.dumps({'message': str(e)})
         }
 
-
 def past_due_email(to_address, to_name, admin_url):
 
     try:
@@ -80,7 +79,6 @@ def past_due_email(to_address, to_name, admin_url):
             'body': json.dumps({'message': str(e)})
         }
 
-
 def welcome_email(to_address, to_name, loginLink):
 
     try:
@@ -114,7 +112,6 @@ def welcome_email(to_address, to_name, loginLink):
             'headers': {'Access-Control-Allow-Origin': '*'},
             'body': json.dumps({'message': str(e)})
         }
-
 
 def order_create_email(to_address, to_name, order_details):
 
@@ -160,7 +157,6 @@ def order_create_email(to_address, to_name, order_details):
             'headers': {'Access-Control-Allow-Origin': '*'},
             'body': json.dumps({'message': str(e)})
         }
-
 
 def new_order_create_email(to_address, to_name, order_details):
 
@@ -208,7 +204,6 @@ def new_order_create_email(to_address, to_name, order_details):
             'body': json.dumps({'message': str(e)})
         }
 
-
 def order_cancel_email(to_address, to_name, order_details):
 
     try:
@@ -250,7 +245,6 @@ def order_cancel_email(to_address, to_name, order_details):
             'headers': {'Access-Control-Allow-Origin': '*'},
             'body': json.dumps({'message': str(e)})
         }
-
 
 def order_receipt_email(to_address, to_name, order_details):
 
@@ -297,7 +291,6 @@ def order_receipt_email(to_address, to_name, order_details):
             'body': json.dumps({'message': str(e)})
         }
 
-
 def order_verified_email(to_address, to_name, order_details):
 
     try:
@@ -343,7 +336,6 @@ def order_verified_email(to_address, to_name, order_details):
             'body': json.dumps({'message': str(e)})
         }
 
-
 def order_delivered_email(to_address, to_name, order_details):
 
     try:
@@ -388,7 +380,6 @@ def order_delivered_email(to_address, to_name, order_details):
             'headers': {'Access-Control-Allow-Origin': '*'},
             'body': json.dumps({'message': str(e)})
         }
-
 
 def contact_team_email(to_address, to_name, login_link, message):
 
@@ -461,3 +452,4 @@ def order_access_code_email(to_address, to_name, code, business_name):
             "body": json.dumps({"message": str(e)}),
         }
 
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  
