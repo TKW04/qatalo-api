@@ -1,6 +1,8 @@
 import json
 import os
+# pyrefly: ignore [missing-import]
 from mailersend import emails
+# pyrefly: ignore [missing-import]
 from jinja2 import Environment, FileSystemLoader
 
 env = Environment(loader=FileSystemLoader("templates"))
@@ -437,3 +439,25 @@ def contact_team_email(to_address, to_name, login_link, message):
             'headers': {'Access-Control-Allow-Origin': '*'},
             'body': json.dumps({'message': str(e)})
         }
+
+def order_access_code_email(to_address, to_name, code, business_name):
+    try:
+        mail = emails.NewEmail(MAIL_API_TOKEN)
+        template = env.get_template("access_code.html")
+        response = mail.send(
+            {
+                "from": {"email": "info@qatalo.online", "name": "Qatalo Support"},
+                "to": [{"email": to_address, "name": to_name}],
+                "subject": f"Tu código de acceso - {business_name}",
+                "html": template.render(name=to_name, code=code, business_name=business_name),
+            }
+        )
+        return {"statusCode": 200, "headers": {"Access-Control-Allow-Origin": "*"}}
+    except Exception as e:
+        print(json.dumps({"event": "order_access_code_email", "Error": str(e)}))
+        return {
+            "statusCode": 500,
+            "headers": {"Access-Control-Allow-Origin": "*"},
+            "body": json.dumps({"message": str(e)}),
+        }
+
