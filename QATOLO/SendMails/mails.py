@@ -410,7 +410,7 @@ def contact_team_email(to_address, to_name, login_link, message):
                 },
                 "to": [
                     {
-                        "email": "info@qatalo.online",
+                        "email": "isaac.hiraldo@icloud.com",
                         "name": "Qatalo Support"
                     }
                 ],
