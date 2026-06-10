@@ -118,6 +118,12 @@ def get_products_by_user_id(user_id: str):
                     ),
                     "delivery_start_day": item.get("delivery_start_day", ""),
                     "localities": item.get("localities", []) or [],
+                    "is_customizable": bool(
+                        item.get("is_customizable", False)
+                        if item.get("is_customizable", False) in [True, "true", "True", 1, "1"]
+                        else False
+                    ),
+                    "variants": item.get("variants", []) or [],
                 }
             )
         return {
@@ -195,6 +201,12 @@ def get_products_by_business_id(business_id: str):
                     "delivery_start_day": item.get("delivery_start_day", ""),
                     "localities": item.get("localities", []) or [],
                     "place": item.get("place", ""),
+                    "is_customizable": bool(
+                        item.get("is_customizable", False)
+                        if item.get("is_customizable", False) in [True, "true", "True", 1, "1"]
+                        else False
+                    ),
+                    "variants": item.get("variants", []) or [],
                 }
             )
         return {
@@ -224,14 +236,14 @@ def create_product(event, user_name, user_id):
         product_id = str(uuid.uuid4())
         products_table.put_item(Item={
             "product_id": product_id,
-            "business_id": data.get("business_id", ""),
-            "product_name": data.get("name", ""),
-            "description": data.get("description", ""),
+            "business_id": data.get("business_id", "").strip(),
+            "product_name": data.get("name", "").strip(),
+            "description": data.get("description", "").strip(),
             "price": Decimal(str(data.get("price", 0) or 0)),
             "quantity": int(data.get("quantity", 0) or 0),
             "orden": int(data.get("orden", 0) or 0),
             "just_one": bool(data.get("just_one", False)),
-            "terms": data.get("terms", ""),
+            "terms": data.get("terms", "").strip(),
             "show_quantity": bool(data.get("show_quantity", False)),
             "currency": data.get("currency", ""),
             "imagesUrl": data.get("imagesUrl", []),
@@ -242,6 +254,8 @@ def create_product(event, user_name, user_id):
             "required_delivery_day": bool(data.get("required_delivery_day", False)),
             "delivery_start_day": data.get("delivery_start_day", ""),
             "localities": data.get("localities", []) or [],
+            "is_customizable": bool(data.get("is_customizable", False)),        # ← nuevo
+            "variants": data.get("variants", []) or [],                         # ← nuevo
             "user_id": user_id,
             "create_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "create_user": user_name,
@@ -253,7 +267,6 @@ def create_product(event, user_name, user_id):
         print(json.dumps({"event": "create_product", "Error": str(e)}))
         return _resp(500, {"message": str(e)})
 
-
 def update_product(event, user_name, product_id, user_id):
     try:
         data = json.loads(event.get("body", "{}"))
@@ -264,17 +277,19 @@ def update_product(event, user_name, product_id, user_id):
                 "just_one=:j, show_quantity=:sq, terms=:t, min_age_allow=:ma, min_age=:mage, "
                 "required_delivery_day=:rdd, delivery_start_day=:dsd, currency=:c, "
                 "imagesUrl=:img, category_id=:cat, is_available=:av, localities=:loc, "
+                "is_customizable=:ic, #var=:var, "                               # ← nuevo
                 "user_id=:uid, update_date=:ud, update_user=:uu"
             ),
+            ExpressionAttributeNames={"#var": "variants"},                       # ← nuevo (variants es reservada)
             ExpressionAttributeValues={
-                ":n": data.get("name", ""),
-                ":d": data.get("description", ""),
+                ":n": data.get("name", "").strip(),
+                ":d": data.get("description", "").strip(),
                 ":p": Decimal(str(data.get("price", 0) or 0)),
                 ":q": int(data.get("quantity", 0) or 0),
                 ":o": int(data.get("orden", 0) or 0),
                 ":j": bool(data.get("just_one", False)),
                 ":sq": bool(data.get("show_quantity", False)),
-                ":t": data.get("terms", ""),
+                ":t": data.get("terms", "").strip(),
                 ":ma": bool(data.get("min_age_allow", False)),
                 ":mage": int(data.get("min_age", 0) or 0),
                 ":rdd": bool(data.get("required_delivery_day", False)),
@@ -284,6 +299,8 @@ def update_product(event, user_name, product_id, user_id):
                 ":cat": data.get("category_id", ""),
                 ":av": data.get("is_available", "unavailable"),
                 ":loc": data.get("localities", []) or [],
+                ":ic": bool(data.get("is_customizable", False)),                 # ← nuevo
+                ":var": data.get("variants", []) or [],                          # ← nuevo
                 ":uid": user_id,
                 ":ud": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 ":uu": user_name,
@@ -294,6 +311,7 @@ def update_product(event, user_name, product_id, user_id):
     except Exception as e:
         print(json.dumps({"event": "update_product", "Error": str(e)}))
         return _resp(500, {"message": str(e)})
+
 def delete_product_image(event):
     try:
         body = json.loads(event.get("body", "{}"))

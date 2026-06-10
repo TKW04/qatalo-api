@@ -102,21 +102,34 @@ def _catalog_url(business):
     return f"{FRONT_END_URL}/catalog/{business.get('business_slug', '')}"
 
 
-def _adjust_stock(product_id, delta, updated_by):
-    """delta negativo descuenta, positivo restaura. Ignora si el producto no existe."""
+def _adjust_stock(product_id, delta, updated_by, variant_id=None):
     if not product_id or delta == 0:
         return
     product = products_table.get_item(Key={"product_id": product_id}).get("Item")
     if not product:
         return
-    new_qty = int(product.get("quantity", 0)) + delta
-    if new_qty < 0:
-        new_qty = 0
-    products_table.update_item(
-        Key={"product_id": product_id},
-        UpdateExpression="SET quantity = :q, update_date = :ud, update_user = :uu",
-        ExpressionAttributeValues={":q": new_qty, ":ud": _now(), ":uu": updated_by},
-    )
+    if variant_id:
+        variants = product.get("variants", [])
+        updated = False
+        for v in variants:
+            if v.get("variant_id") == variant_id:
+                v["quantity"] = max(0, int(v.get("quantity", 0)) + delta)
+                updated = True
+                break
+        if updated:
+            products_table.update_item(
+                Key={"product_id": product_id},
+                UpdateExpression="SET #var = :v, update_date = :ud, update_user = :uu",
+                ExpressionAttributeNames={"#var": "variants"},
+                ExpressionAttributeValues={":v": variants, ":ud": _now(), ":uu": updated_by},
+            )
+    else:
+        new_qty = max(0, int(product.get("quantity", 0)) + delta)
+        products_table.update_item(
+            Key={"product_id": product_id},
+            UpdateExpression="SET quantity = :q, update_date = :ud, update_user = :uu",
+            ExpressionAttributeValues={":q": new_qty, ":ud": _now(), ":uu": updated_by},
+        )
 
 
 def _notify_n8n(customer_phone, transaction_id, status):
@@ -674,7 +687,8 @@ def approve_transaction(event, user_id=None):
         for m in members:
             if m.get("status") != "Aprobada":
                 m["status"] = "Aprobada"
-                _adjust_stock(m.get("product_id", ""), -int(m.get("quantity", 1) or 1), customer.get("email", ""))
+                _adjust_stock(m.get("product_id", ""), -int(m.get("quantity", 1) or 1), customer.get("email", ""),
+              variant_id=(m.get("variant") or {}).get("variant_id"))
         _save_transactions(customer["customer_id"], transactions, customer.get("email", ""))
         business = _get_business(customer.get("business_id", "")) or {}
         owner_email = _owner_email(business)
@@ -708,6 +722,8 @@ def delivered_transaction(event, user_id=None):
         members = _group_members(transactions, tx)
         for m in members:
             m["status"] = "Entregada"
+            _adjust_stock(m.get("product_id", ""), -int(m.get("quantity", 1) or 1), customer.get("email", ""),
+              variant_id=(m.get("variant") or {}).get("variant_id"))
         _save_transactions(customer["customer_id"], transactions, customer.get("email", ""))
         business = _get_business(customer.get("business_id", "")) or {}
         owner_email = _owner_email(business)
@@ -745,7 +761,8 @@ def cancel_transaction(event, user_id=None):
             m["status"] = "Cancelada"
             m["cancellation_reason"] = reason
             if prev in ("Aprobada", "Entregada"):
-                _adjust_stock(m.get("product_id", ""), int(m.get("quantity", 1) or 1), customer.get("email", ""))
+                _adjust_stock(m.get("product_id", ""), int(m.get("quantity", 1) or 1), customer.get("email", ""),
+              variant_id=(m.get("variant") or {}).get("variant_id"))
         _save_transactions(customer["customer_id"], transactions, customer.get("email", ""))
         business = _get_business(customer.get("business_id", "")) or {}
         owner_email = _owner_email(business)
@@ -785,6 +802,7 @@ def update_transaction(event, user_id=None):
         tx["product_id"] = body.get("product_id", tx.get("product_id", ""))
         tx["product_name"] = body.get("product_name", tx.get("product_name", ""))
         tx["payment_method"] = body.get("payment_method", tx.get("payment_method", {}))
+        tx["locality"] = body.get("locality", tx.get("locality", ""))
         _save_transactions(customer["customer_id"], transactions, customer.get("email", ""))
         return _resp(200, {"message": "Transacción actualizada correctamente"})
     except Exception as e:
@@ -1175,7 +1193,8 @@ def cancel_order_by_token(event):
             m["status"] = "Cancelada"
             m["cancellation_reason"] = reason
             if prev in ("Aprobada", "Entregada"):
-                _adjust_stock(m.get("product_id", ""), int(m.get("quantity", 1) or 1), customer.get("email", ""))
+                _adjust_stock(m.get("product_id", ""), int(m.get("quantity", 1) or 1), customer.get("email", ""),
+              variant_id=(m.get("variant") or {}).get("variant_id"))
         _save_transactions(customer["customer_id"], transactions, customer.get("email", ""))
         business = _get_business(customer.get("business_id", "")) or {}
         owner_email = _owner_email(business)
