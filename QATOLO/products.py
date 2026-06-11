@@ -124,6 +124,7 @@ def get_products_by_user_id(user_id: str):
                         else False
                     ),
                     "variants": item.get("variants", []) or [],
+                    "locality_config": item.get("locality_config", []) or [],
                 }
             )
         return {
@@ -207,6 +208,7 @@ def get_products_by_business_id(business_id: str):
                         else False
                     ),
                     "variants": item.get("variants", []) or [],
+                    "locality_config": item.get("locality_config", []) or [],
                 }
             )
         return {
@@ -255,12 +257,13 @@ def create_product(event, user_name, user_id):
             "delivery_start_day": data.get("delivery_start_day", ""),
             "localities": data.get("localities", []) or [],
             "is_customizable": bool(data.get("is_customizable", False)),        # ← nuevo
-            "variants": data.get("variants", []) or [],                         # ← nuevo
+            "variants": data.get("variants", []) or [],      
+            "locality_config": data.get("locality_config", []) or [],                   # ← nuevo
             "user_id": user_id,
             "create_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "create_user": user_name,
             "update_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "update_user": user_name,
+            "update_user": user_name,   
         })
         return _resp(200, {"message": "Producto creado correctamente"})
     except Exception as e:
@@ -277,7 +280,7 @@ def update_product(event, user_name, product_id, user_id):
                 "just_one=:j, show_quantity=:sq, terms=:t, min_age_allow=:ma, min_age=:mage, "
                 "required_delivery_day=:rdd, delivery_start_day=:dsd, currency=:c, "
                 "imagesUrl=:img, category_id=:cat, is_available=:av, localities=:loc, "
-                "is_customizable=:ic, #var=:var, "                               # ← nuevo
+                "is_customizable=:ic, #var=:var, locality_config=:lc, "
                 "user_id=:uid, update_date=:ud, update_user=:uu"
             ),
             ExpressionAttributeNames={"#var": "variants"},                       # ← nuevo (variants es reservada)
@@ -301,6 +304,7 @@ def update_product(event, user_name, product_id, user_id):
                 ":loc": data.get("localities", []) or [],
                 ":ic": bool(data.get("is_customizable", False)),                 # ← nuevo
                 ":var": data.get("variants", []) or [],                          # ← nuevo
+                ":lc": data.get("locality_config", []) or [],
                 ":uid": user_id,
                 ":ud": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 ":uu": user_name,

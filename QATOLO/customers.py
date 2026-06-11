@@ -561,6 +561,9 @@ def create_customer_cart(event):
             "payment_method": payment_method,
             "delivery_day": it.get("delivery_day", ""),
             "locality": it.get("locality", ""),
+            "fulfillment_type": it.get("fulfillment_type", ""),
+            "delivery_price": Decimal(str(it.get("delivery_price", 0) or 0)),
+            "delivery_address": it.get("delivery_address", "") if it.get("fulfillment_type") == "delivery" else "",
             "create_date": now,
             "create_user": email,
         } for it in items]
@@ -803,6 +806,9 @@ def update_transaction(event, user_id=None):
         tx["product_name"] = body.get("product_name", tx.get("product_name", ""))
         tx["payment_method"] = body.get("payment_method", tx.get("payment_method", {}))
         tx["locality"] = body.get("locality", tx.get("locality", ""))
+        tx["fulfillment_type"] = body.get("fulfillment_type", tx.get("fulfillment_type", ""))
+        tx["delivery_price"] = Decimal(str(body.get("delivery_price", tx.get("delivery_price", 0)) or 0))
+        tx["delivery_address"] = body.get("delivery_address", tx.get("delivery_address", ""))
         _save_transactions(customer["customer_id"], transactions, customer.get("email", ""))
         return _resp(200, {"message": "Transacción actualizada correctamente"})
     except Exception as e:
@@ -1096,6 +1102,9 @@ def add_transaction_by_token(event):
             "payment_method": payment_method,
             "delivery_day": transaction.get("delivery_day", ""),
             "locality": transaction.get("locality", ""),
+            "fulfillment_type": transaction.get("fulfillment_type", ""),
+            "delivery_price": Decimal(str(transaction.get("delivery_price", 0) or 0)),
+            "delivery_address": transaction.get("delivery_address", "") if transaction.get("fulfillment_type") == "delivery" else "",
             "create_date": _now(),
             "create_user": customer.get("email", ""),
         }
@@ -1152,6 +1161,9 @@ def checkout_cart_by_token(event):
             "locality": it.get("locality", ""),
             "create_date": now,
             "create_user": customer.get("email", ""),
+            "fulfillment_type": it.get("fulfillment_type", ""),
+            "delivery_price": Decimal(str(it.get("delivery_price", 0) or 0)),
+            "delivery_address": it.get("delivery_address", "") if it.get("fulfillment_type") == "delivery" else "",
         } for it in items]
         transactions.extend(new_txs)
         _save_transactions(customer["customer_id"], transactions, customer.get("email", ""))
