@@ -28,6 +28,10 @@ from SendMails.mails import (
     order_verified_email,
     order_access_code_email
 )
+try:
+    from offers import increment_offer_uses
+except ImportError:
+    def increment_offer_uses(x): pass 
 
 
 dynamodb = boto3.resource("dynamodb", region_name=os.getenv("AWS_REGION"))
@@ -539,6 +543,9 @@ def create_customer_cart(event):
         body = json.loads(event.get("body", "{}"))
         business_id = body.get("business_id", "")
         email = body.get("email", "").strip()
+        offer_id   = body.get("offer_id", "")
+        offer_name = body.get("offer_name", "")
+        offer_code = (body.get("offer_code", "") or "").upper()
         items = body.get("items", []) or []
         pm = body.get("payment_method", {}) or {}
         if not items:
@@ -564,6 +571,11 @@ def create_customer_cart(event):
             "fulfillment_type": it.get("fulfillment_type", ""),
             "delivery_price": Decimal(str(it.get("delivery_price", 0) or 0)),
             "delivery_address": it.get("delivery_address", "") if it.get("fulfillment_type") == "delivery" else "",
+            "offer_id":       offer_id,
+            "offer_name":     offer_name,
+            "offer_code":     offer_code,
+            "original_price": Decimal(str(it.get("original_price", it.get("price", 0)) or 0)),
+            "discount_amount":Decimal(str(it.get("discount_amount", 0) or 0)),
             "create_date": now,
             "create_user": email,
         } for it in items]
@@ -809,6 +821,11 @@ def update_transaction(event, user_id=None):
         tx["fulfillment_type"] = body.get("fulfillment_type", tx.get("fulfillment_type", ""))
         tx["delivery_price"] = Decimal(str(body.get("delivery_price", tx.get("delivery_price", 0)) or 0))
         tx["delivery_address"] = body.get("delivery_address", tx.get("delivery_address", ""))
+        tx["offer_id"]       = body.get("offer_id",       tx.get("offer_id",""))
+        tx["offer_name"]     = body.get("offer_name",     tx.get("offer_name",""))
+        tx["offer_code"]     = body.get("offer_code",     tx.get("offer_code",""))
+        tx["original_price"] = Decimal(str(body.get("original_price", tx.get("original_price",0)) or 0))
+        tx["discount_amount"]= Decimal(str(body.get("discount_amount",tx.get("discount_amount",0)) or 0))
         _save_transactions(customer["customer_id"], transactions, customer.get("email", ""))
         return _resp(200, {"message": "Transacción actualizada correctamente"})
     except Exception as e:
@@ -1105,12 +1122,19 @@ def add_transaction_by_token(event):
             "fulfillment_type": transaction.get("fulfillment_type", ""),
             "delivery_price": Decimal(str(transaction.get("delivery_price", 0) or 0)),
             "delivery_address": transaction.get("delivery_address", "") if transaction.get("fulfillment_type") == "delivery" else "",
+            "offer_id":       transaction.get("offer_id",""),
+            "offer_name":     transaction.get("offer_name",""),
+            "offer_code":     (transaction.get("offer_code","") or "").upper(),
+            "original_price": Decimal(str(transaction.get("original_price", transaction.get("price",0)) or 0)),
+            "discount_amount":Decimal(str(transaction.get("discount_amount",0) or 0)),
             "create_date": _now(),
             "create_user": customer.get("email", ""),
         }
         transactions.append(tx)
         _save_transactions(customer["customer_id"], transactions, customer.get("email", ""))
-
+        if tx.get("offer_id"):
+            try: increment_offer_uses(tx["offer_id"])
+            except: pass
         try:
             owner_email = _owner_email(business)
             magic = _customer_magic_link(business, customer["customer_id"], customer["business_id"], customer.get("email", ""))
@@ -1136,6 +1160,9 @@ def checkout_cart_by_token(event):
         if err:
             return err
         body = json.loads(event.get("body", "{}"))
+        offer_id   = body.get("offer_id", "")
+        offer_name = body.get("offer_name", "")
+        offer_code = (body.get("offer_code", "") or "").upper()
         items = body.get("items", []) or []
         pm = body.get("payment_method", {}) or {}
         if not items:
@@ -1164,10 +1191,16 @@ def checkout_cart_by_token(event):
             "fulfillment_type": it.get("fulfillment_type", ""),
             "delivery_price": Decimal(str(it.get("delivery_price", 0) or 0)),
             "delivery_address": it.get("delivery_address", "") if it.get("fulfillment_type") == "delivery" else "",
+            "offer_id":       offer_id,
+            "offer_name":     offer_name,
+            "offer_code":     offer_code,
+            "original_price": Decimal(str(it.get("original_price", it.get("price", 0)) or 0)),
+            "discount_amount":Decimal(str(it.get("discount_amount", 0) or 0)),
         } for it in items]
         transactions.extend(new_txs)
         _save_transactions(customer["customer_id"], transactions, customer.get("email", ""))
-
+        if offer_id:
+                increment_offer_uses(offer_id)
         try:
             owner_email = _owner_email(business)
             magic = _customer_magic_link(business, customer["customer_id"], customer["business_id"], customer.get("email", ""))

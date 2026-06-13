@@ -10,6 +10,7 @@ from business import business_routes
 from users import users_routes
 from paddle import paddle_routes
 from categories import categories_routes
+from offers import offers_routes 
 
 
 def lambda_handler(event, context):
@@ -46,6 +47,8 @@ def lambda_handler(event, context):
             return customers_routes(path=path, method=method, event=event, user_name=user_name, user_id=user_id, alias=alias)
         if "team" in path:
             return contact_team_routes(path=path, method=method, event=event, alias=alias)
+        if "offers" in path:
+            return offers_routes(path, method, event, user_id, alias)
     except Exception as e:
         print(f"Error processing request: {str(e)}")
         return {
