@@ -16,7 +16,11 @@ def payment_methods_routes(path, method, event, user_name, user_id, alias):
         return get_payment_methods_by_user_id(user_id=user_id)
     if path == f"/{alias}/payment_methods" and method == 'POST':
         return create_payment_method(event=event, user_name=user_name, user_id=user_id)
-
+    # ── Ruta pública (sin auth) ──
+    m_pub = re.fullmatch(rf"/{alias}/payment_methods/public/([^/]+)", path)
+    if m_pub and method == "GET":
+        return get_payment_methods_by_business(m_pub.group(1))
+    
     match = re.fullmatch(rf'/{alias}/payment_methods/([^/]+)', path)
     if match:
         payment_method_id = match.group(1)
@@ -25,7 +29,7 @@ def payment_methods_routes(path, method, event, user_name, user_id, alias):
         if method == 'DELETE':
             return delete_payment_method(payment_method_id)
         if method == 'GET':
-            return get_payment_methods_by_business_id(business_id=payment_method_id)
+            return get_payment_methods_by_business(business_id=payment_method_id)
 
     return {
         'statusCode': 404,
@@ -79,53 +83,37 @@ def get_payment_methods_by_user_id(user_id: str):
             'body': json.dumps({'message': str(e)})
         }
 
-
-def get_payment_methods_by_business_id(business_id: str):
-    """
-    Retrieve all payment_methods from the database.
-    """
+def get_payment_methods_by_business(business_id):
     try:
         response = payment_methods_table.scan(
-            FilterExpression=Attr('business_id').eq(business_id)
+            FilterExpression=Attr("business_id").eq(business_id)
         )
-        payment_methods = []
-        for item in response.get("Items", []):
-            payment_methods.append({
-                "payment_method_id": item.get("payment_method_id", ""),
+        methods = [
+            {
+                "payment_method_id":   item.get("payment_method_id", ""),
                 "payment_method_name": item.get("payment_method_name", ""),
-                "user_id": item.get("user_id", ""),
-                "business_id": item.get("business_id", ""),
-                "payment_type": item.get("payment_type", ""),
-                "account_number": item.get("account_number", ""),
-                "account_type": item.get("account_type", ""),
-                "bank_name": item.get("bank_name", ""),
-                "routing_number": item.get("routing_number", ""),
-                "owner_name": item.get("owner_name", ""),
-                "owner_document": item.get("owner_document", ""),
-                "owner_email": item.get("owner_email", ""),
-                "swift": item.get("swift", ""),
-                "standard_account": item.get("standard_account", ""),
-                "payment_link": item.get("payment_link", ""),
-                "currency": item.get("currency", "")
-
-            })
+                "payment_type":        item.get("payment_type", ""),
+                "currency":            item.get("currency", ""),
+                "details":             item.get("details", ""),
+            }
+            for item in response.get("Items", [])
+        ]
         return {
-            'statusCode': 200,  # No uses 204
-            'headers': {
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Headers': '*',
-                'Access-Control-Allow-Methods': '*'
+            "statusCode": 200,
+            "headers": {
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Headers": "*",
+                "Access-Control-Allow-Methods": "*",
             },
-            'body': json.dumps(payment_methods, default=str)
+            "body": json.dumps(methods, default=str),
         }
     except Exception as e:
-        print(json.dumps({"event": "get_payment_methods", "Error": str(e)}))
+        print(json.dumps({"event": "get_payment_methods_by_business", "Error": str(e)}))
         return {
-            'statusCode': 500,
-            'headers': {'Access-Control-Allow-Origin': '*'},
-            'body': json.dumps({'message': str(e)})
+            "statusCode": 500,
+            "headers": {"Access-Control-Allow-Origin": "*"},
+            "body": json.dumps({"message": str(e)}),
         }
-
 
 def create_payment_method(event, user_name, user_id):
     """

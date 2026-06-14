@@ -25,9 +25,12 @@ def lambda_handler(event, context):
         user_name = ""
         user_id = ""
         if token is not None:
-            decoded = decode_jwt_payload(token)
-            user_name = decoded.get("email")
-            user_id = decoded.get("sub")
+            try:
+                decoded = decode_jwt_payload(token)
+                user_name = decoded.get("email")
+                user_id = decoded.get("sub")
+            except:
+                pass
         path = event.get('rawPath', '')
         method = event.get('requestContext', {}).get(
             'http', {}).get('method', '')
@@ -48,7 +51,7 @@ def lambda_handler(event, context):
         if "team" in path:
             return contact_team_routes(path=path, method=method, event=event, alias=alias)
         if "offers" in path:
-            return offers_routes(path, method, event, user_id, alias)
+            return offers_routes(path=path, method=method, event=event, user_id=user_id, alias=alias)
     except Exception as e:
         print(f"Error processing request: {str(e)}")
         return {

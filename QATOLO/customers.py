@@ -707,7 +707,7 @@ def approve_transaction(event, user_id=None):
         _save_transactions(customer["customer_id"], transactions, customer.get("email", ""))
         business = _get_business(customer.get("business_id", "")) or {}
         owner_email = _owner_email(business)
-        _notify_n8n(customer.get("phone", ""), tx.get("transaction_id", ""), "Aprobada")
+        # _notify_n8n(customer.get("phone", ""), tx.get("transaction_id", ""), "Aprobada")
         try:
             order_verified_email(
                 customer.get("email"),
