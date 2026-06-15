@@ -479,8 +479,8 @@ def create_customer(event):
                 upload_link=magic,
             )
             owner_details = {**customer_details, "upload_link": f"{FRONT_END_URL}/admin"}
-            new_order_create_email(owner_email or "Qatalo", to_name=business.get("business_name", "Qatalo"), order_details=owner_details)
-            order_create_email(email, to_name=customer_details["customer_name"], order_details=customer_details)
+            new_order_create_email(owner_email or "Qatalo", to_name=business.get("business_name", "Qatalo"), order_details=owner_details, business=business)
+            order_create_email(email, to_name=customer_details["customer_name"], order_details=customer_details, business=business)
         except Exception as notify_err:
             print(json.dumps({"event": "create_customer.notify", "Error": str(notify_err)}))
         return _resp(200, {"message": "Orden creada", "customer_id": customer_id})
@@ -529,8 +529,8 @@ def create_customer_transaction(body):
                 upload_link=magic,
             )
             owner_details = {**customer_details, "upload_link": f"{FRONT_END_URL}/admin"}
-            new_order_create_email(owner_email or "Qatalo", to_name=business.get("business_name", "Qatalo"), order_details=owner_details)
-            order_create_email(body.get("email"), to_name=customer_details["customer_name"], order_details=customer_details)
+            new_order_create_email(owner_email or "Qatalo", to_name=business.get("business_name", "Qatalo"), order_details=owner_details, business=business)
+            order_create_email(body.get("email"), to_name=customer_details["customer_name"], order_details=customer_details,business=business)
         except Exception as notify_err:
             print(json.dumps({"event": "create_customer_transaction.notify", "Error": str(notify_err)}))
         return _resp(200, {"message": "Orden creada", "customer_id": customer_id})
@@ -613,8 +613,8 @@ def create_customer_cart(event):
                 upload_link=magic,
             )
             owner_details = {**customer_details, "upload_link": f"{FRONT_END_URL}/admin"}
-            new_order_create_email(owner_email or "Qatalo", to_name=business.get("business_name", "Qatalo"), order_details=owner_details)
-            order_create_email(email, to_name=customer_details["customer_name"], order_details=customer_details)
+            new_order_create_email(owner_email or "Qatalo", to_name=business.get("business_name", "Qatalo"), order_details=owner_details, business=business)
+            order_create_email(email, to_name=customer_details["customer_name"], order_details=customer_details, business=business)
         except Exception as mail_err:
             print(json.dumps({"event": "create_customer_cart.email", "Error": str(mail_err)}))
 
@@ -713,6 +713,7 @@ def approve_transaction(event, user_id=None):
                 customer.get("email"),
                 to_name=f"{customer.get('given_name')} {customer.get('family_name')}",
                 order_details=_order_details_group(business, members, owner_email, business_website_url=_catalog_url(business)),
+                business=business,
             )
         except Exception as mail_err:
             print(json.dumps({"event": "approve_transaction.email", "Error": str(mail_err)}))
@@ -747,6 +748,7 @@ def delivered_transaction(event, user_id=None):
                 customer.get("email"),
                 to_name=f"{customer.get('given_name')} {customer.get('family_name')}",
                 order_details=_order_details_group(business, members, owner_email, business_website_url=_catalog_url(business)),
+                business=business,
             )
         except Exception as mail_err:
             print(json.dumps({"event": "delivered_transaction.email", "Error": str(mail_err)}))
@@ -790,6 +792,7 @@ def cancel_transaction(event, user_id=None):
                     cancellation_date=_now(), cancellation_reason=reason,
                     business_website_url=_catalog_url(business),
                 ),
+                business=business,
             )
         except Exception as mail_err:
             print(json.dumps({"event": "cancel_transaction.email", "Error": str(mail_err)}))
@@ -933,6 +936,7 @@ def upload_receipt(event):
                 customer.get("email"),
                 to_name=f"{customer.get('given_name')} {customer.get('family_name')}",
                 order_details=_order_details_group(business, members, owner_email, business_website_url=_catalog_url(business)),
+                business=business,
             )
         except Exception as mail_err:
             print(json.dumps({"event": "upload_receipt.email", "Error": str(mail_err)}))
@@ -1144,8 +1148,8 @@ def add_transaction_by_token(event):
                 upload_link=magic,
             )
             owner_details = {**customer_details, "upload_link": f"{FRONT_END_URL}/admin"}
-            new_order_create_email(owner_email or "Qatalo", to_name=business.get("business_name", "Qatalo"), order_details=owner_details)
-            order_create_email(customer.get("email"), to_name=customer_details["customer_name"], order_details=customer_details)
+            new_order_create_email(owner_email or "Qatalo", to_name=business.get("business_name", "Qatalo"), order_details=owner_details, business=business)
+            order_create_email(customer.get("email"), to_name=customer_details["customer_name"], order_details=customer_details,business=business)
         except Exception as mail_err:
             print(json.dumps({"event": "add_transaction_by_token.email", "Error": str(mail_err)}))
 
@@ -1210,8 +1214,8 @@ def checkout_cart_by_token(event):
                 upload_link=magic,
             )
             owner_details = {**customer_details, "upload_link": f"{FRONT_END_URL}/admin"}
-            new_order_create_email(owner_email or "Qatalo", to_name=business.get("business_name", "Qatalo"), order_details=owner_details)
-            order_create_email(customer.get("email"), to_name=customer_details["customer_name"], order_details=customer_details)
+            new_order_create_email(owner_email or "Qatalo", to_name=business.get("business_name", "Qatalo"), order_details=owner_details, business=business)
+            order_create_email(customer.get("email"), to_name=customer_details["customer_name"], order_details=customer_details,business=business)
         except Exception as mail_err:
             print(json.dumps({"event": "checkout_cart_by_token.email", "Error": str(mail_err)}))
 
@@ -1251,6 +1255,7 @@ def cancel_order_by_token(event):
                 cancellation_date=_now(), cancellation_reason=reason,
                 business_website_url=_catalog_url(business),
             ),
+            business=business,
         )
     except Exception as e:
         print(json.dumps({"event": "cancel_order_by_token", "Error": str(e)}))

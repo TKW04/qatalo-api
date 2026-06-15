@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Orden Recibida - {{business_name}}</title>
+    <title>Nueva orden recibida - {{ business_name }}</title>
     <style>
       * {
         margin: 0;
@@ -28,7 +28,7 @@
       }
 
       .header {
-        background: linear-gradient(135deg, #113f67 0%, #34699a 100%);
+        background: linear-gradient(135deg, {{ color_primary }} 0%, {{ color_secondary }} 100%);
         padding: 40px 30px;
         text-align: center;
         position: relative;
@@ -44,7 +44,7 @@
         height: 200%;
         background: radial-gradient(
           circle,
-          rgba(253, 245, 170, 0.1) 0%,
+          {{ rgba_highlight_10 }} 0%,
           transparent 70%
         );
         animation: rotate 20s linear infinite;
@@ -60,7 +60,7 @@
       }
 
       .logo {
-        color: #fdf5aa;
+        color: {{ color_highlight }};
         font-size: 2.2rem;
         font-weight: bold;
         letter-spacing: 2px;
@@ -70,9 +70,9 @@
       }
 
       .status-badge {
-        background: rgba(253, 245, 170, 0.9);
-        border: 2px solid #fdf5aa;
-        color: #113f67;
+        background: {{ rgba_highlight_90 }};
+        border: 2px solid {{ color_highlight }};
+        color: {{ color_primary }};
         padding: 10px 25px;
         border-radius: 25px;
         font-size: 1rem;
@@ -89,14 +89,14 @@
 
       .greeting {
         font-size: 1.5rem;
-        color: #113f67;
+        color: {{ color_primary }};
         margin-bottom: 20px;
         font-weight: 600;
         text-align: center;
       }
 
       .confirmation-message {
-        color: #34699a;
+        color: {{ color_secondary }};
         font-size: 1.1rem;
         margin-bottom: 30px;
         line-height: 1.7;
@@ -106,17 +106,17 @@
       .order-summary {
         background: linear-gradient(
           135deg,
-          rgba(88, 160, 200, 0.05) 0%,
-          rgba(253, 245, 170, 0.05) 100%
+          {{ rgba_accent_5 }} 0%,
+          {{ rgba_highlight_5 }} 100%
         );
-        border: 1px solid rgba(88, 160, 200, 0.2);
+        border: 1px solid {{ rgba_accent_20 }};
         border-radius: 12px;
         padding: 25px;
         margin: 30px 0;
       }
 
       .order-title {
-        color: #113f67;
+        color: {{ color_primary }};
         font-size: 1.3rem;
         font-weight: 600;
         margin-bottom: 20px;
@@ -135,26 +135,26 @@
         justify-content: space-between;
         align-items: center;
         padding: 10px 0;
-        border-bottom: 1px dashed rgba(88, 160, 200, 0.2);
+        border-bottom: 1px dashed {{ rgba_accent_20 }};
       }
 
       .detail-row:last-child {
         border-bottom: none;
         font-weight: 600;
         font-size: 1.1rem;
-        color: #113f67;
+        color: {{ color_primary }};
         margin-top: 10px;
         padding-top: 15px;
-        border-top: 2px solid rgba(88, 160, 200, 0.2);
+        border-top: 2px solid {{ rgba_accent_20 }};
       }
 
       .detail-label {
-        color: #34699a;
+        color: {{ color_secondary }};
         font-weight: 500;
       }
 
       .detail-value {
-        color: #113f67;
+        color: {{ color_primary }};
         font-weight: 600;
       }
 
@@ -164,22 +164,22 @@
         padding: 30px;
         background: linear-gradient(
           135deg,
-          rgba(253, 245, 170, 0.1) 0%,
-          rgba(88, 160, 200, 0.1) 100%
+          {{ rgba_highlight_10 }} 0%,
+          {{ rgba_accent_10 }} 100%
         );
         border-radius: 12px;
-        border: 1px solid rgba(88, 160, 200, 0.2);
+        border: 1px solid {{ rgba_accent_20 }};
       }
 
       .cta-title {
-        color: #113f67;
+        color: {{ color_primary }};
         font-size: 1.4rem;
         font-weight: 600;
         margin-bottom: 15px;
       }
 
       .cta-description {
-        color: #34699a;
+        color: {{ color_secondary }};
         font-size: 1rem;
         margin-bottom: 25px;
         line-height: 1.6;
@@ -187,14 +187,14 @@
 
       .upload-button {
         display: inline-block;
-        background: linear-gradient(135deg, #58a0c8 0%, #34699a 100%);
+        background: linear-gradient(135deg, {{ color_accent }} 0%, {{ color_secondary }} 100%);
         color: white;
         padding: 18px 45px;
         text-decoration: none;
         border-radius: 50px;
         font-size: 1.2rem;
         font-weight: 600;
-        box-shadow: 0 4px 15px rgba(88, 160, 200, 0.3);
+        box-shadow: 0 4px 15px {{ rgba_accent_30 }};
         transition: all 0.3s ease;
         position: relative;
         overflow: hidden;
@@ -222,19 +222,19 @@
 
       .upload-button:hover {
         transform: translateY(-2px);
-        box-shadow: 0 6px 20px rgba(88, 160, 200, 0.4);
+        box-shadow: 0 6px 20px {{ rgba_accent_40 }};
       }
 
       .payment-info {
-        background: rgba(253, 245, 170, 0.2);
-        border: 1px solid #fdf5aa;
+        background: {{ rgba_highlight_20 }};
+        border: 1px solid {{ color_highlight }};
         padding: 20px;
         border-radius: 8px;
         margin: 30px 0;
       }
 
       .payment-info-title {
-        color: #113f67;
+        color: {{ color_primary }};
         font-weight: 600;
         margin-bottom: 15px;
         display: flex;
@@ -253,12 +253,12 @@
         display: flex;
         justify-content: space-between;
         align-items: center;
-        color: #34699a;
+        color: {{ color_secondary }};
         font-size: 0.95rem;
       }
 
       .payment-method strong {
-        color: #113f67;
+        color: {{ color_primary }};
       }
 
       .status-timeline {
@@ -266,15 +266,15 @@
         padding: 25px;
         background: linear-gradient(
           135deg,
-          rgba(88, 160, 200, 0.05) 0%,
-          rgba(253, 245, 170, 0.05) 100%
+          {{ rgba_accent_5 }} 0%,
+          {{ rgba_highlight_5 }} 100%
         );
         border-radius: 12px;
-        border-left: 4px solid #58a0c8;
+        border-left: 4px solid {{ color_accent }};
       }
 
       .timeline-title {
-        color: #113f67;
+        color: {{ color_primary }};
         font-weight: 600;
         margin-bottom: 20px;
         font-size: 1.2rem;
@@ -300,13 +300,13 @@
       }
 
       .timeline-status.completed {
-        background: #58a0c8;
+        background: {{ color_accent }};
         color: white;
       }
 
       .timeline-status.pending {
-        background: #fdf5aa;
-        color: #113f67;
+        background: {{ color_highlight }};
+        color: {{ color_primary }};
       }
 
       .timeline-status.upcoming {
@@ -315,29 +315,29 @@
       }
 
       .timeline-text {
-        color: #34699a;
+        color: {{ color_secondary }};
         font-size: 0.95rem;
       }
 
       .timeline-text.completed {
-        color: #113f67;
+        color: {{ color_primary }};
         font-weight: 500;
       }
 
       .important-note {
         background: linear-gradient(
           135deg,
-          rgba(253, 245, 170, 0.15) 0%,
-          rgba(88, 160, 200, 0.05) 100%
+          {{ rgba_highlight_15 }} 0%,
+          {{ rgba_accent_5 }} 100%
         );
-        border: 1px solid rgba(253, 245, 170, 0.5);
+        border: 1px solid {{ rgba_highlight_50 }};
         padding: 20px;
         border-radius: 8px;
         margin: 25px 0;
       }
 
       .note-title {
-        color: #113f67;
+        color: {{ color_primary }};
         font-weight: 600;
         margin-bottom: 10px;
         display: flex;
@@ -346,19 +346,19 @@
       }
 
       .note-text {
-        color: #34699a;
+        color: {{ color_secondary }};
         font-size: 0.9rem;
         line-height: 1.5;
       }
 
       .footer {
-        background: linear-gradient(135deg, #113f67 0%, #34699a 100%);
+        background: linear-gradient(135deg, {{ color_primary }} 0%, {{ color_secondary }} 100%);
         padding: 30px;
         text-align: center;
       }
 
       .footer-text {
-        color: #58a0c8;
+        color: {{ color_accent }};
         font-size: 0.9rem;
         margin-bottom: 15px;
       }
@@ -373,23 +373,23 @@
       .social-link {
         width: 40px;
         height: 40px;
-        background: rgba(253, 245, 170, 0.1);
+        background: {{ rgba_highlight_10 }};
         border-radius: 50%;
         display: flex;
         align-items: center;
         justify-content: center;
-        color: #fdf5aa;
+        color: {{ color_highlight }};
         text-decoration: none;
         transition: all 0.3s ease;
       }
 
       .social-link:hover {
-        background: rgba(253, 245, 170, 0.2);
+        background: {{ rgba_highlight_20 }};
         transform: translateY(-2px);
       }
 
       .copyright {
-        color: #58a0c8;
+        color: {{ color_accent }};
         font-size: 0.8rem;
         opacity: 0.8;
       }
@@ -449,7 +449,7 @@
         <div class="logo">
           <img
             src="{{ business_logo_url }}"
-            alt="CatalogQR Logo"
+            alt="{{ business_name }}"
             width="200"
           />
         </div>
@@ -546,18 +546,18 @@
           </div>
         </div>
 
-        <div style="margin-top: 30px; color: #34699a; text-align: center">
+        <div style="margin-top: 30px; color: {{ color_secondary }}; text-align: center">
           <strong>¿Tienes preguntas?</strong><br />
           Contáctanos en:<br />
-          Email: <strong style="color: #113f67">{{ business_email }}</strong><br/>
-          Teléfono: <strong style="color: #113f67">{{ business_phone }}</strong>
+          Email: <strong style="color: {{ color_primary }}">{{ business_email }}</strong><br/>
+          Teléfono: <strong style="color: {{ color_primary }}">{{ business_phone }}</strong>
         </div>
       </div>
 
       <!-- Footer -->
       <div class="footer">
         <div class="copyright">
-          © 2025 Qatalo. Todos los derechos reservados.<br />
+          © 2025 {{ business_name }}. Todos los derechos reservados.<br />
         </div>
       </div>
     </div>
