@@ -84,6 +84,8 @@ def get_business(user_id: str):
                 "themeType": item.get("theme_type", "predefined"),
                 "themePalette": item.get("theme_palette") or {},
                 "localities": item.get("localities") or [],
+                "ga_tracking_id": item.get("ga_tracking_id", ""),
+"meta_pixel_id":  item.get("meta_pixel_id", ""),
             }
             return _resp(200, business)
         return {'statusCode': 404, 'headers': {'Access-Control-Allow-Origin': '*'}}
@@ -110,6 +112,8 @@ def get_business_by_slug(slug: str):
             "themePalette": item.get("theme_palette") or {},
             "localities": item.get("localities") or [],
             "status": item.get("status"),
+            "ga_tracking_id": item.get("ga_tracking_id", ""),
+"meta_pixel_id":  item.get("meta_pixel_id", ""),
         }
         return _resp(200, business)
     except Exception as e:
@@ -133,6 +137,8 @@ def create_business(event, user_name, user_id):
             "theme_type": data.get('themeType', 'predefined'),
             "theme_palette": data.get('themePalette'),
             "localities": data.get('localities') or [],
+            "ga_tracking_id":  data.get("ga_tracking_id", ""),
+            "meta_pixel_id":   data.get("meta_pixel_id", ""),
             "create_date": datetime.now().isoformat(),
             "update_date": datetime.now().isoformat(),
         }
@@ -153,7 +159,8 @@ def update_business(event, user_id, business_id):
             UpdateExpression=(
                 "SET business_name=:n, business_description=:d, business_slug=:s, "
                 "business_phone=:p, business_logo_url=:l, template_id=:t, "
-                "theme_type=:tt, theme_palette=:tp, localities=:loc, update_date=:u"
+                "theme_type=:tt, theme_palette=:tp, localities=:loc, update_date=:u, "
+                "ga_tracking_id=:ga, meta_pixel_id=:mp"
             ),
             ExpressionAttributeValues={
                 ":n": data.get('name'),
@@ -166,6 +173,8 @@ def update_business(event, user_id, business_id):
                 ":tp": data.get('themePalette'),
                 ":loc": data.get('localities') or [],
                 ":u": datetime.now().isoformat(),
+                ":ga": data.get("ga_tracking_id", ""),
+                ":mp": data.get("meta_pixel_id", ""),
             },
         )
         return _resp(200, {'message': 'Negocio actualizado'})
