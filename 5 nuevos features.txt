@@ -1,16 +1,5 @@
 Roadmap de las 5 features
 
-🟢 Feature 1 — Pixel de seguimiento (GA4 / Meta Pixel)
-Esfuerzo: bajo · Impacto: alto
-El negocio conecta sus campañas de ads con el catálogo. Cada visita y pedido se trackea.
-Qué cambia:
-
-Business.jsx (admin): dos campos nuevos — Google Analytics ID y Meta Pixel ID
-businesses.py: guardar/leer los dos campos
-CatalogManager.jsx: inyectar los scripts dinámicamente si el negocio los tiene configurados
-
-Sin backend nuevo, sin tablas nuevas. Solo 2 campos en el modelo de negocio existente.
-
 🟢 Feature 2 — Importación masiva de productos desde Excel
 Esfuerzo: medio · Impacto: muy alto
 El dueño sube un .xlsx con sus productos y se crean de golpe. Crítico para negocios que migran desde otro sistema o tienen 50+ productos.
@@ -55,7 +44,3 @@ Orders.jsx: botón "Descargar factura" en el modal de detalle
 Nuevo endpoint POST /orders/invoice: recibe order_group o transaction_id, genera PDF con reportlab o HTML → weasyprint, devuelve URL pre-firmada de S3
 S3: carpeta invoices/ para guardar los PDFs generados
 Diseño del PDF: logo del negocio, colores del tema, tabla de productos, totales, pie con datos de contacto
-
-
-Resumen visual
-#FeatureBackendFrontendEsfuerzo1📊 Pixel GA4/MetaSolo 2 camposScript injection🟢 Bajo2📦 Import ExcelEndpoint batchUpload + modal🟢 Bajo-Medio3🔔 Alerta stockEventBridge + email1 campo + toggle🟡 Medio4📅 Recordatorio entregaEventBridge + email1 toggle🟡 Medio5🧾 Factura PDFLambda + S3Botón + descarga🔴 Alto
