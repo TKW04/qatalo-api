@@ -113,7 +113,7 @@ def get_business_by_slug(slug: str):
             "localities": item.get("localities") or [],
             "status": item.get("status"),
             "ga_tracking_id": item.get("ga_tracking_id", ""),
-"meta_pixel_id":  item.get("meta_pixel_id", ""),
+            "meta_pixel_id":  item.get("meta_pixel_id", ""),
         }
         return _resp(200, business)
     except Exception as e:
