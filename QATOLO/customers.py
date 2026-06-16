@@ -112,6 +112,7 @@ def _adjust_stock(product_id, delta, updated_by, variant_id=None):
     product = products_table.get_item(Key={"product_id": product_id}).get("Item")
     if not product:
         return
+
     if variant_id:
         variants = product.get("variants", [])
         updated = False
@@ -121,18 +122,31 @@ def _adjust_stock(product_id, delta, updated_by, variant_id=None):
                 updated = True
                 break
         if updated:
+            total_stock    = sum(int(v.get("quantity", 0)) for v in variants)
+            new_available  = "unavailable" if total_stock == 0 else "available"
             products_table.update_item(
                 Key={"product_id": product_id},
-                UpdateExpression="SET #var = :v, update_date = :ud, update_user = :uu",
+                UpdateExpression="SET #var=:v, is_available=:av, update_date=:ud, update_user=:uu",
                 ExpressionAttributeNames={"#var": "variants"},
-                ExpressionAttributeValues={":v": variants, ":ud": _now(), ":uu": updated_by},
+                ExpressionAttributeValues={
+                    ":v":  variants,
+                    ":av": new_available,
+                    ":ud": _now(),
+                    ":uu": updated_by,
+                },
             )
     else:
-        new_qty = max(0, int(product.get("quantity", 0)) + delta)
+        new_qty       = max(0, int(product.get("quantity", 0)) + delta)
+        new_available = "unavailable" if new_qty == 0 else "available"
         products_table.update_item(
             Key={"product_id": product_id},
-            UpdateExpression="SET quantity = :q, update_date = :ud, update_user = :uu",
-            ExpressionAttributeValues={":q": new_qty, ":ud": _now(), ":uu": updated_by},
+            UpdateExpression="SET quantity=:q, is_available=:av, update_date=:ud, update_user=:uu",
+            ExpressionAttributeValues={
+                ":q":  new_qty,
+                ":av": new_available,
+                ":ud": _now(),
+                ":uu": updated_by,
+            },
         )
 
 

@@ -23,6 +23,9 @@ def products_routes(path, method, event, user_name, user_id, alias):
             return create_product(event=event, user_name=user_name, user_id=user_id)
         if path == f"/{alias}/products/delete/image" and method == "DELETE":
             return delete_product_image(event=event)
+        
+        if path == f"/{alias}/products/import" and method == "POST":
+            return import_products(event=event, user_name=user_name, user_id=user_id)
 
         if "/products/dropdown/" in path:
             match_dropdown = re.fullmatch(rf"/{alias}/products/dropdown/([^/]+)", path)
@@ -144,7 +147,6 @@ def get_products_by_user_id(user_id: str):
             "body": json.dumps({"message": str(e)}),
         }
 
-
 def get_products_by_business_id(business_id: str):
     """
     Retrieve all products from the database.
@@ -227,7 +229,6 @@ def get_products_by_business_id(business_id: str):
             "headers": {"Access-Control-Allow-Origin": "*"},
             "body": json.dumps({"message": str(e)}),
         }
-
 
 def _resp(status, body):
     return {"statusCode": status, "headers": {"Access-Control-Allow-Origin": "*"}, "body": json.dumps(body, default=str)}
@@ -349,7 +350,6 @@ def delete_product_image(event):
             "body": json.dumps({"message": str(e)}),
         }
 
-
 def get_product_dropdown(business_id: str):
     """
     Retrieve products for dropdown.
@@ -385,7 +385,72 @@ def get_product_dropdown(business_id: str):
             "body": json.dumps({"message": str(e)}),
         }
 
+def import_products(event, user_name, user_id):
+    try:
+        data     = json.loads(event.get("body", "{}"))
+        rows     = data.get("products", [])
+        biz_id   = data.get("business_id", "")
+        if not biz_id or not rows:
+            return _resp(400, {"message": "Faltan datos"})
 
+        created, errors = 0, []
+
+        for i, row in enumerate(rows):
+            try:
+                name = (row.get("name") or "").strip()
+                if not name:
+                    errors.append({"row": i + 1, "name": f"Fila {i + 1}", "error": "Nombre vacío"})
+                    continue
+
+                products_table.put_item(Item={
+                    "product_id":          str(uuid.uuid4()),
+                    "business_id":         biz_id,
+                    "product_name":        name,
+                    "description":         (row.get("description") or "").strip(),
+                    "price":               Decimal(str(row.get("price", 0) or 0)),
+                    "quantity":            int(row.get("quantity", 0) or 0),
+                    "currency":            (row.get("currency") or "").strip(),
+                    "category_id":         (row.get("category_id") or "").strip(),
+                    "is_available":        "unavailable",   # siempre inactivo al importar
+                    "imagesUrl":           [],
+                    "orden":               i,
+                    "just_one":            False,
+                    "show_quantity":       False,
+                    "min_age_allow":       False,
+                    "min_age":             0,
+                    "required_delivery_day": False,
+                    "delivery_start_day":  "",
+                    "terms":               "",
+                    "localities":          [],
+                    "locality_config":     [],
+                    "is_customizable":     False,
+                    "variants":            [],
+                    "ga_tracking_id":      "",
+                    "meta_pixel_id":       "",
+                    "user_id":             user_id,
+                    "create_date":         datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "create_user":         user_name,
+                    "update_date":         datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "update_user":         user_name,
+                })
+                created += 1
+
+            except Exception as row_err:
+                errors.append({
+                    "row":   i + 1,
+                    "name":  row.get("name", f"Fila {i + 1}"),
+                    "error": str(row_err),
+                })
+
+        return _resp(200, {
+            "message":     f"{created} producto(s) importado(s) correctamente.",
+            "created":     created,
+            "errors":      errors,
+            "error_count": len(errors),
+        })
+    except Exception as e:
+        print(json.dumps({"event": "import_products", "Error": str(e)}))
+        return _resp(500, {"message": str(e)})
 # Helpers
 
 
