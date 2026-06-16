@@ -117,13 +117,6 @@ def order_access_code_email(to_address, to_name, code, business_name):
         return {"statusCode": 500, "headers": {"Access-Control-Allow-Origin": "*"},
                 "body": json.dumps({"message": str(e)})}
 
-
-# ── Emails de órdenes (remitente = negocio, colores del negocio) ──────────────
-#
-# IMPORTANTE: todos los callers en customers.py deben pasar business=business
-# Ejemplo:
-#   order_create_email(email, name, order_details, business=business)
-
 def order_create_email(to_address, to_name, order_details, business):
     """
     Enviado al CLIENTE cuando crea una nueva orden.
@@ -338,3 +331,47 @@ def order_delivered_email(to_address, to_name, order_details, business):
         print(json.dumps({"event": "order_delivered_email", "Error": str(e)}))
         return {"statusCode": 500, "headers": {"Access-Control-Allow-Origin": "*"},
                 "body": json.dumps({"message": str(e)})}
+
+def low_stock_alert_email(to_address, product_name, business_name, current_stock, threshold):
+    """Alerta de stock bajo — enviada al dueño del negocio (cliente de Qatalo)."""
+    try:
+        mail = emails.NewEmail(MAIL_API_TOKEN)
+        template = env.get_template("low_stock_alert.html")
+        mail.send({
+            "from": QATALO_FROM,
+            "to":   [{"email": to_address, "name": business_name}],
+            "subject": f"⚠️ Stock bajo — {product_name}",
+            "html": template.render(
+                is_out_of_stock=False,
+                product_name=product_name,
+                business_name=business_name,
+                current_stock=current_stock,
+                threshold=threshold,
+                admin_url="https://qatalo.online/admin",
+            )
+        })
+    except Exception as e:
+        print(json.dumps({"event": "low_stock_alert_email", "Error": str(e)}))
+
+
+def out_of_stock_alert_email(to_address, product_name, business_name):
+    """Alerta de producto agotado — enviada al dueño del negocio (cliente de Qatalo)."""
+    try:
+        mail = emails.NewEmail(MAIL_API_TOKEN)
+        template = env.get_template("low_stock_alert.html")
+        mail.send({
+            "from": QATALO_FROM,
+            "to":   [{"email": to_address, "name": business_name}],
+            "subject": f"🚨 Producto agotado — {product_name}",
+            "html": template.render(
+                is_out_of_stock=True,
+                product_name=product_name,
+                business_name=business_name,
+                current_stock=0,
+                threshold=0,
+                admin_url="https://qatalo.online/admin",
+            )
+        })
+    except Exception as e:
+        print(json.dumps({"event": "out_of_stock_alert_email", "Error": str(e)}))
+

@@ -1,4 +1,3 @@
-
 from decimal import Decimal
 import io
 import os
@@ -23,7 +22,7 @@ def products_routes(path, method, event, user_name, user_id, alias):
             return create_product(event=event, user_name=user_name, user_id=user_id)
         if path == f"/{alias}/products/delete/image" and method == "DELETE":
             return delete_product_image(event=event)
-        
+
         if path == f"/{alias}/products/import" and method == "POST":
             return import_products(event=event, user_name=user_name, user_id=user_id)
 
@@ -35,7 +34,7 @@ def products_routes(path, method, event, user_name, user_id, alias):
                     return get_product_dropdown(business_id=business_id)
 
         if "/products/n8n" in path and method == "GET":
-            
+
             match = re.fullmatch(rf"/{alias}/products/n8n/([^/]+)", path)
             if match:
                 business_id = match.group(1)
@@ -123,11 +122,15 @@ def get_products_by_user_id(user_id: str):
                     "localities": item.get("localities", []) or [],
                     "is_customizable": bool(
                         item.get("is_customizable", False)
-                        if item.get("is_customizable", False) in [True, "true", "True", 1, "1"]
+                        if item.get("is_customizable", False)
+                        in [True, "true", "True", 1, "1"]
                         else False
                     ),
                     "variants": item.get("variants", []) or [],
                     "locality_config": item.get("locality_config", []) or [],
+                    "low_stock_threshold": item.get(
+                        "low_stock_threshold"
+                    ),  # None = usa el global del negocio
                 }
             )
         return {
@@ -146,6 +149,7 @@ def get_products_by_user_id(user_id: str):
             "headers": {"Access-Control-Allow-Origin": "*"},
             "body": json.dumps({"message": str(e)}),
         }
+
 
 def get_products_by_business_id(business_id: str):
     """
@@ -206,7 +210,8 @@ def get_products_by_business_id(business_id: str):
                     "place": item.get("place", ""),
                     "is_customizable": bool(
                         item.get("is_customizable", False)
-                        if item.get("is_customizable", False) in [True, "true", "True", 1, "1"]
+                        if item.get("is_customizable", False)
+                        in [True, "true", "True", 1, "1"]
                         else False
                     ),
                     "variants": item.get("variants", []) or [],
@@ -230,46 +235,60 @@ def get_products_by_business_id(business_id: str):
             "body": json.dumps({"message": str(e)}),
         }
 
+
 def _resp(status, body):
-    return {"statusCode": status, "headers": {"Access-Control-Allow-Origin": "*"}, "body": json.dumps(body, default=str)}
+    return {
+        "statusCode": status,
+        "headers": {"Access-Control-Allow-Origin": "*"},
+        "body": json.dumps(body, default=str),
+    }
+
 
 def create_product(event, user_name, user_id):
     try:
         data = json.loads(event.get("body", "{}"))
         product_id = str(uuid.uuid4())
-        products_table.put_item(Item={
-            "product_id": product_id,
-            "business_id": data.get("business_id", "").strip(),
-            "product_name": data.get("name", "").strip(),
-            "description": data.get("description", "").strip(),
-            "price": Decimal(str(data.get("price", 0) or 0)),
-            "quantity": int(data.get("quantity", 0) or 0),
-            "orden": int(data.get("orden", 0) or 0),
-            "just_one": bool(data.get("just_one", False)),
-            "terms": data.get("terms", "").strip(),
-            "show_quantity": bool(data.get("show_quantity", False)),
-            "currency": data.get("currency", ""),
-            "imagesUrl": data.get("imagesUrl", []),
-            "category_id": data.get("category_id", ""),
-            "is_available": data.get("is_available", "unavailable"),
-            "min_age_allow": bool(data.get("min_age_allow", False)),
-            "min_age": int(data.get("min_age", 0) or 0),
-            "required_delivery_day": bool(data.get("required_delivery_day", False)),
-            "delivery_start_day": data.get("delivery_start_day", ""),
-            "localities": data.get("localities", []) or [],
-            "is_customizable": bool(data.get("is_customizable", False)),        # ← nuevo
-            "variants": data.get("variants", []) or [],      
-            "locality_config": data.get("locality_config", []) or [],                   # ← nuevo
-            "user_id": user_id,
-            "create_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "create_user": user_name,
-            "update_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "update_user": user_name,   
-        })
+        products_table.put_item(
+            Item={
+                "product_id": product_id,
+                "business_id": data.get("business_id", "").strip(),
+                "product_name": data.get("name", "").strip(),
+                "description": data.get("description", "").strip(),
+                "price": Decimal(str(data.get("price", 0) or 0)),
+                "quantity": int(data.get("quantity", 0) or 0),
+                "orden": int(data.get("orden", 0) or 0),
+                "just_one": bool(data.get("just_one", False)),
+                "terms": data.get("terms", "").strip(),
+                "show_quantity": bool(data.get("show_quantity", False)),
+                "currency": data.get("currency", ""),
+                "imagesUrl": data.get("imagesUrl", []),
+                "category_id": data.get("category_id", ""),
+                "is_available": data.get("is_available", "unavailable"),
+                "min_age_allow": bool(data.get("min_age_allow", False)),
+                "min_age": int(data.get("min_age", 0) or 0),
+                "required_delivery_day": bool(data.get("required_delivery_day", False)),
+                "delivery_start_day": data.get("delivery_start_day", ""),
+                "localities": data.get("localities", []) or [],
+                "is_customizable": bool(data.get("is_customizable", False)),  # ← nuevo
+                "variants": data.get("variants", []) or [],
+                "locality_config": data.get("locality_config", []) or [],  # ← nuevo
+                "low_stock_threshold": (
+                    int(data["low_stock_threshold"])
+                    if data.get("low_stock_threshold") not in (None, "", "null")
+                    else None
+                ),
+                "user_id": user_id,
+                "create_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "create_user": user_name,
+                "update_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "update_user": user_name,
+            }
+        )
         return _resp(200, {"message": "Producto creado correctamente"})
     except Exception as e:
         print(json.dumps({"event": "create_product", "Error": str(e)}))
         return _resp(500, {"message": str(e)})
+
 
 def update_product(event, user_name, product_id, user_id):
     try:
@@ -282,9 +301,11 @@ def update_product(event, user_name, product_id, user_id):
                 "required_delivery_day=:rdd, delivery_start_day=:dsd, currency=:c, "
                 "imagesUrl=:img, category_id=:cat, is_available=:av, localities=:loc, "
                 "is_customizable=:ic, #var=:var, locality_config=:lc, "
-                "user_id=:uid, update_date=:ud, update_user=:uu"
+                "user_id=:uid, update_date=:ud, update_user=:uu, low_stock_threshold=:lst"
             ),
-            ExpressionAttributeNames={"#var": "variants"},                       # ← nuevo (variants es reservada)
+            ExpressionAttributeNames={
+                "#var": "variants"
+            },  # ← nuevo (variants es reservada)
             ExpressionAttributeValues={
                 ":n": data.get("name", "").strip(),
                 ":d": data.get("description", "").strip(),
@@ -303,12 +324,17 @@ def update_product(event, user_name, product_id, user_id):
                 ":cat": data.get("category_id", ""),
                 ":av": data.get("is_available", "unavailable"),
                 ":loc": data.get("localities", []) or [],
-                ":ic": bool(data.get("is_customizable", False)),                 # ← nuevo
-                ":var": data.get("variants", []) or [],                          # ← nuevo
+                ":ic": bool(data.get("is_customizable", False)),  # ← nuevo
+                ":var": data.get("variants", []) or [],  # ← nuevo
                 ":lc": data.get("locality_config", []) or [],
                 ":uid": user_id,
                 ":ud": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 ":uu": user_name,
+                ":lst": (
+                    int(data["low_stock_threshold"])
+                    if data.get("low_stock_threshold") not in (None, "", "null")
+                    else None
+                ),
             },
             ReturnValues="UPDATED_NEW",
         )
@@ -316,6 +342,7 @@ def update_product(event, user_name, product_id, user_id):
     except Exception as e:
         print(json.dumps({"event": "update_product", "Error": str(e)}))
         return _resp(500, {"message": str(e)})
+
 
 def delete_product_image(event):
     try:
@@ -349,6 +376,7 @@ def delete_product_image(event):
             "headers": {"Access-Control-Allow-Origin": "*"},
             "body": json.dumps({"message": str(e)}),
         }
+
 
 def get_product_dropdown(business_id: str):
     """
@@ -385,11 +413,12 @@ def get_product_dropdown(business_id: str):
             "body": json.dumps({"message": str(e)}),
         }
 
+
 def import_products(event, user_name, user_id):
     try:
-        data     = json.loads(event.get("body", "{}"))
-        rows     = data.get("products", [])
-        biz_id   = data.get("business_id", "")
+        data = json.loads(event.get("body", "{}"))
+        rows = data.get("products", [])
+        biz_id = data.get("business_id", "")
         if not biz_id or not rows:
             return _resp(400, {"message": "Faltan datos"})
 
@@ -399,58 +428,69 @@ def import_products(event, user_name, user_id):
             try:
                 name = (row.get("name") or "").strip()
                 if not name:
-                    errors.append({"row": i + 1, "name": f"Fila {i + 1}", "error": "Nombre vacío"})
+                    errors.append(
+                        {"row": i + 1, "name": f"Fila {i + 1}", "error": "Nombre vacío"}
+                    )
                     continue
 
-                products_table.put_item(Item={
-                    "product_id":          str(uuid.uuid4()),
-                    "business_id":         biz_id,
-                    "product_name":        name,
-                    "description":         (row.get("description") or "").strip(),
-                    "price":               Decimal(str(row.get("price", 0) or 0)),
-                    "quantity":            int(row.get("quantity", 0) or 0),
-                    "currency":            (row.get("currency") or "").strip(),
-                    "category_id":         (row.get("category_id") or "").strip(),
-                    "is_available":        "unavailable",   # siempre inactivo al importar
-                    "imagesUrl":           [],
-                    "orden":               i,
-                    "just_one":            False,
-                    "show_quantity":       False,
-                    "min_age_allow":       False,
-                    "min_age":             0,
-                    "required_delivery_day": False,
-                    "delivery_start_day":  "",
-                    "terms":               "",
-                    "localities":          [],
-                    "locality_config":     [],
-                    "is_customizable":     False,
-                    "variants":            [],
-                    "ga_tracking_id":      "",
-                    "meta_pixel_id":       "",
-                    "user_id":             user_id,
-                    "create_date":         datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "create_user":         user_name,
-                    "update_date":         datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "update_user":         user_name,
-                })
+                products_table.put_item(
+                    Item={
+                        "product_id": str(uuid.uuid4()),
+                        "business_id": biz_id,
+                        "product_name": name,
+                        "description": (row.get("description") or "").strip(),
+                        "price": Decimal(str(row.get("price", 0) or 0)),
+                        "quantity": int(row.get("quantity", 0) or 0),
+                        "currency": (row.get("currency") or "").strip(),
+                        "category_id": (row.get("category_id") or "").strip(),
+                        "is_available": "unavailable",  # siempre inactivo al importar
+                        "imagesUrl": [],
+                        "orden": i,
+                        "just_one": False,
+                        "show_quantity": False,
+                        "min_age_allow": False,
+                        "min_age": 0,
+                        "required_delivery_day": False,
+                        "delivery_start_day": "",
+                        "terms": "",
+                        "localities": [],
+                        "locality_config": [],
+                        "is_customizable": False,
+                        "variants": [],
+                        "ga_tracking_id": "",
+                        "meta_pixel_id": "",
+                        "user_id": user_id,
+                        "create_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "create_user": user_name,
+                        "update_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "update_user": user_name,
+                    }
+                )
                 created += 1
 
             except Exception as row_err:
-                errors.append({
-                    "row":   i + 1,
-                    "name":  row.get("name", f"Fila {i + 1}"),
-                    "error": str(row_err),
-                })
+                errors.append(
+                    {
+                        "row": i + 1,
+                        "name": row.get("name", f"Fila {i + 1}"),
+                        "error": str(row_err),
+                    }
+                )
 
-        return _resp(200, {
-            "message":     f"{created} producto(s) importado(s) correctamente.",
-            "created":     created,
-            "errors":      errors,
-            "error_count": len(errors),
-        })
+        return _resp(
+            200,
+            {
+                "message": f"{created} producto(s) importado(s) correctamente.",
+                "created": created,
+                "errors": errors,
+                "error_count": len(errors),
+            },
+        )
     except Exception as e:
         print(json.dumps({"event": "import_products", "Error": str(e)}))
         return _resp(500, {"message": str(e)})
+
+
 # Helpers
 
 

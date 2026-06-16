@@ -5,71 +5,90 @@ import os
 from datetime import datetime
 from boto3.dynamodb.conditions import Attr
 
-dynamodb = boto3.resource('dynamodb', region_name=os.getenv('AWS_REGION'))
+dynamodb = boto3.resource("dynamodb", region_name=os.getenv("AWS_REGION"))
 business_table = dynamodb.Table("qatalo.business")
-s3 = boto3.client('s3')
+s3 = boto3.client("s3")
 
-CORS = {'Access-Control-Allow-Origin': '*'}
+CORS = {"Access-Control-Allow-Origin": "*"}
+
 
 def _resp(status, body):
-    return {'statusCode': status, 'headers': CORS, 'body': json.dumps(body, default=str)}
+    return {
+        "statusCode": status,
+        "headers": CORS,
+        "body": json.dumps(body, default=str),
+    }
+
 
 # --- Helper para generar URLs Pre-firmadas ---
-def get_presigned_url(user_id, type_file="logo", extension=".png", content_type="image/png", folder="business"):
+def get_presigned_url(
+    user_id,
+    type_file="logo",
+    extension=".png",
+    content_type="image/png",
+    folder="business",
+):
     safe_folder = (folder or "business").strip("/")
     key = f"{safe_folder}/{user_id}_{type_file}{extension}"
     public_url = f"https://{os.getenv('BUCKET_NAME')}.s3.{os.getenv('AWS_REGION')}.amazonaws.com/{key}"
 
     upload_url = s3.generate_presigned_url(
         ClientMethod="put_object",
-        Params={"Bucket": os.getenv('BUCKET_NAME'), "Key": key, "ContentType": content_type},
+        Params={
+            "Bucket": os.getenv("BUCKET_NAME"),
+            "Key": key,
+            "ContentType": content_type,
+        },
         ExpiresIn=3600,
     )
     return {"uploadUrl": upload_url, "publicUrl": public_url}
 
+
 # --- Rutas ---
 def business_routes(path, method, event, user_name, user_id, alias):
-    if path == f'/{alias}/businesses/presign' and method == 'POST':
-        body = json.loads(event.get('body', '{}'))
+    if path == f"/{alias}/businesses/presign" and method == "POST":
+        body = json.loads(event.get("body", "{}"))
         return {
-            'statusCode': 200,
-            'headers': {'Access-Control-Allow-Origin': '*'},
-            'body': json.dumps(
+            "statusCode": 200,
+            "headers": {"Access-Control-Allow-Origin": "*"},
+            "body": json.dumps(
                 get_presigned_url(
                     user_id,
-                    body.get('type'),
-                    body.get('ext'),
-                    body.get('mime'),
-                    body.get('folder', 'business'),
+                    body.get("type"),
+                    body.get("ext"),
+                    body.get("mime"),
+                    body.get("folder", "business"),
                 )
             ),
         }
 
-    if path == f'/{alias}/businesses' and method == 'POST':
+    if path == f"/{alias}/businesses" and method == "POST":
         return create_business(event=event, user_name=user_name, user_id=user_id)
 
-    if path == f'/{alias}/businesses' and method == 'GET':
-        return get_business(user_id=user_id)
-    
-    if path.startswith(f'/{alias}/businesses/') and method == 'PUT':
-        business_id = path.split('/')[-1]
+    if path == f"/{alias}/businesses" and method == "GET":
+        return get_business_by_user_id(user_id=user_id)
+
+    if path.startswith(f"/{alias}/businesses/") and method == "PUT":
+        business_id = path.split("/")[-1]
         return update_business(event=event, user_id=user_id, business_id=business_id)
-    
-    if path.startswith(f'/{alias}/businesses/') and method == 'GET':
-        slug = path.split('/')[-1]
+
+    if path.startswith(f"/{alias}/businesses/") and method == "GET":
+        slug = path.split("/")[-1]
         return get_business_by_slug(slug)
 
     # Lógica para PUT/GET por ID/Slug...
-    return {'statusCode': 404, 'body': 'Ruta no encontrada'}
+    return {"statusCode": 404, "body": "Ruta no encontrada"}
+
 
 # --- Métodos de Negocio ---
 
-def get_business(user_id: str):
+
+def get_business_by_user_id(user_id: str):
     """
     Retrieve business by user ID.
     """
     try:
-        response = business_table.scan(FilterExpression=Attr('user_id').eq(user_id))
+        response = business_table.scan(FilterExpression=Attr("user_id").eq(user_id))
         if "Items" in response and len(response["Items"]) > 0:
             item = response["Items"][0]
             # Mapeamos los nuevos campos de diseño
@@ -85,20 +104,22 @@ def get_business(user_id: str):
                 "themePalette": item.get("theme_palette") or {},
                 "localities": item.get("localities") or [],
                 "ga_tracking_id": item.get("ga_tracking_id", ""),
-"meta_pixel_id":  item.get("meta_pixel_id", ""),
+                "meta_pixel_id": item.get("meta_pixel_id", ""),
+                "low_stock_threshold": int(item.get("low_stock_threshold", 5) or 5),
             }
             return _resp(200, business)
-        return {'statusCode': 404, 'headers': {'Access-Control-Allow-Origin': '*'}}
+        return {"statusCode": 404, "headers": {"Access-Control-Allow-Origin": "*"}}
     except Exception as e:
-        return {'statusCode': 500, 'body': json.dumps({'message': str(e)})}
+        return {"statusCode": 500, "body": json.dumps({"message": str(e)})}
+
 
 def get_business_by_slug(slug: str):
     """Catálogo público por slug (sin autenticación)."""
     try:
-        response = business_table.scan(FilterExpression=Attr('business_slug').eq(slug))
+        response = business_table.scan(FilterExpression=Attr("business_slug").eq(slug))
         items = response.get("Items", [])
         if not items:
-            return _resp(404, {'message': 'Catálogo no encontrado'})
+            return _resp(404, {"message": "Catálogo no encontrado"})
         item = items[0]
         business = {
             "business_id": item.get("business_id"),
@@ -113,79 +134,87 @@ def get_business_by_slug(slug: str):
             "localities": item.get("localities") or [],
             "status": item.get("status"),
             "ga_tracking_id": item.get("ga_tracking_id", ""),
-            "meta_pixel_id":  item.get("meta_pixel_id", ""),
+            "meta_pixel_id": item.get("meta_pixel_id", ""),
+            "low_stock_threshold": int(item.get("low_stock_threshold", 5) or 5),
         }
         return _resp(200, business)
     except Exception as e:
         print(json.dumps({"event": "get_business_by_slug", "Error": str(e)}))
-        return _resp(500, {'message': str(e)})
+        return _resp(500, {"message": str(e)})
+
 
 def create_business(event, user_name, user_id):
     try:
-        data = json.loads(event['body'])
-        if business_table.scan(FilterExpression=Attr('business_slug').eq(data.get('slug'))).get('Items'):
-            return _resp(400, {'message': 'El slug ya existe'})
+        data = json.loads(event["body"])
+        if business_table.scan(
+            FilterExpression=Attr("business_slug").eq(data.get("slug"))
+        ).get("Items"):
+            return _resp(400, {"message": "El slug ya existe"})
         item = {
             "business_id": str(uuid.uuid4()),
             "user_id": user_id,
-            "business_name": data.get('name'),
-            "business_description": data.get('description'),
-            "business_slug": data.get('slug'),
-            "business_phone": data.get('phone'),
-            "business_logo_url": data.get('logo_url'),
-            "template_id": data.get('templateId', 'default'),
-            "theme_type": data.get('themeType', 'predefined'),
-            "theme_palette": data.get('themePalette'),
-            "localities": data.get('localities') or [],
-            "ga_tracking_id":  data.get("ga_tracking_id", ""),
-            "meta_pixel_id":   data.get("meta_pixel_id", ""),
+            "business_name": data.get("name"),
+            "business_description": data.get("description"),
+            "business_slug": data.get("slug"),
+            "business_phone": data.get("phone"),
+            "business_logo_url": data.get("logo_url"),
+            "template_id": data.get("templateId", "default"),
+            "theme_type": data.get("themeType", "predefined"),
+            "theme_palette": data.get("themePalette"),
+            "localities": data.get("localities") or [],
+            "ga_tracking_id": data.get("ga_tracking_id", ""),
+            "meta_pixel_id": data.get("meta_pixel_id", ""),
             "create_date": datetime.now().isoformat(),
             "update_date": datetime.now().isoformat(),
+            "low_stock_threshold": int(data.get("low_stock_threshold", 5) or 5),
         }
         business_table.put_item(Item=item)
-        return _resp(200, {'message': 'Negocio creado', 'business_id': item['business_id']})
+        return _resp(
+            200, {"message": "Negocio creado", "business_id": item["business_id"]}
+        )
     except Exception as e:
-        return _resp(500, {'error': str(e)})
+        return _resp(500, {"error": str(e)})
 
 
 def update_business(event, user_id, business_id):
     try:
-        data = json.loads(event['body'])
+        data = json.loads(event["body"])
         existing = business_table.get_item(Key={"business_id": business_id}).get("Item")
         if not existing or existing.get("user_id") != user_id:
-            return _resp(404, {'message': 'Negocio no encontrado'})
+            return _resp(404, {"message": "Negocio no encontrado"})
         business_table.update_item(
             Key={"business_id": business_id},
             UpdateExpression=(
                 "SET business_name=:n, business_description=:d, business_slug=:s, "
                 "business_phone=:p, business_logo_url=:l, template_id=:t, "
                 "theme_type=:tt, theme_palette=:tp, localities=:loc, update_date=:u, "
-                "ga_tracking_id=:ga, meta_pixel_id=:mp"
+                "ga_tracking_id=:ga, meta_pixel_id=:mp, low_stock_threshold=:lst, "
             ),
             ExpressionAttributeValues={
-                ":n": data.get('name'),
-                ":d": data.get('description'),
-                ":s": data.get('slug'),
-                ":p": data.get('phone'),
-                ":l": data.get('logo_url'),
-                ":t": data.get('templateId', 'default'),
-                ":tt": data.get('themeType', 'predefined'),
-                ":tp": data.get('themePalette'),
-                ":loc": data.get('localities') or [],
+                ":n": data.get("name"),
+                ":d": data.get("description"),
+                ":s": data.get("slug"),
+                ":p": data.get("phone"),
+                ":l": data.get("logo_url"),
+                ":t": data.get("templateId", "default"),
+                ":tt": data.get("themeType", "predefined"),
+                ":tp": data.get("themePalette"),
+                ":loc": data.get("localities") or [],
                 ":u": datetime.now().isoformat(),
                 ":ga": data.get("ga_tracking_id", ""),
                 ":mp": data.get("meta_pixel_id", ""),
+                ":lst": int(data.get("low_stock_threshold", 5) or 5),
             },
         )
-        return _resp(200, {'message': 'Negocio actualizado'})
+        return _resp(200, {"message": "Negocio actualizado"})
     except Exception as e:
-        return _resp(500, {'error': str(e)})
+        return _resp(500, {"error": str(e)})
     try:
-        data = json.loads(event['body'])
+        data = json.loads(event["body"])
 
         existing = business_table.get_item(Key={"business_id": business_id}).get("Item")
         if not existing or existing.get("user_id") != user_id:
-            return _resp(404, {'message': 'Negocio no encontrado'})
+            return _resp(404, {"message": "Negocio no encontrado"})
 
         business_table.update_item(
             Key={"business_id": business_id},
@@ -195,17 +224,17 @@ def update_business(event, user_id, business_id):
                 "theme_type=:tt, theme_palette=:tp, update_date=:u"
             ),
             ExpressionAttributeValues={
-                ":n": data.get('name'),
-                ":d": data.get('description'),
-                ":s": data.get('slug'),
-                ":p": data.get('phone'),
-                ":l": data.get('logo_url'),
-                ":t": data.get('templateId', 'default'),
-                ":tt": data.get('themeType', 'predefined'),
-                ":tp": data.get('themePalette'),
+                ":n": data.get("name"),
+                ":d": data.get("description"),
+                ":s": data.get("slug"),
+                ":p": data.get("phone"),
+                ":l": data.get("logo_url"),
+                ":t": data.get("templateId", "default"),
+                ":tt": data.get("themeType", "predefined"),
+                ":tp": data.get("themePalette"),
                 ":u": datetime.now().isoformat(),
             },
         )
-        return _resp(200, {'message': 'Negocio actualizado'})
+        return _resp(200, {"message": "Negocio actualizado"})
     except Exception as e:
-        return _resp(500, {'error': str(e)})
+        return _resp(500, {"error": str(e)})

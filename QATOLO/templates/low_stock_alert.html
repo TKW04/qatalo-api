@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% if is_out_of_stock %}Producto Agotado{% else %}Stock Bajo{% endif %} - Qatalo</title>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { font-family:"Segoe UI",Tahoma,Geneva,Verdana,sans-serif; background:#f8f9fa; line-height:1.6; color:#333; }
+    .container { max-width:600px; margin:0 auto; background:#fff; border-radius:10px; overflow:hidden; box-shadow:0 4px 20px rgba(0,0,0,.1); }
+    .header { background:linear-gradient(135deg,#113f67 0%,#34699a 100%); padding:40px 30px; text-align:center; }
+    .logo { color:#fdf5aa; font-size:1.8rem; font-weight:800; letter-spacing:2px; margin-bottom:16px; }
+    .badge-warning  { background:rgba(253,245,170,.9); border:2px solid #fdf5aa; color:#113f67; padding:10px 25px; border-radius:25px; font-size:1rem; font-weight:700; display:inline-block; }
+    .badge-critical { background:rgba(239,68,68,.2); border:2px solid #ef4444; color:#fff; padding:10px 25px; border-radius:25px; font-size:1rem; font-weight:700; display:inline-block; }
+    .content  { padding:40px 30px; }
+    .greeting { font-size:1.4rem; font-weight:700; color:#113f67; text-align:center; margin-bottom:8px; }
+    .subtitle { font-size:1rem; color:#34699a; text-align:center; margin-bottom:30px; }
+    .alert-box { border-radius:12px; padding:25px; margin:25px 0; text-align:center; }
+    .alert-warning  { background:linear-gradient(135deg,rgba(253,245,170,.15),rgba(88,160,200,.05)); border:1px solid rgba(253,245,170,.5); }
+    .alert-critical { background:rgba(239,68,68,.05); border:1px solid rgba(239,68,68,.2); }
+    .product-name   { font-size:1.3rem; font-weight:700; color:#113f67; margin-bottom:12px; }
+    .stock-warning  { font-size:2.5rem; font-weight:900; color:#d97706; margin-bottom:6px; }
+    .stock-critical { font-size:2.5rem; font-weight:900; color:#ef4444; margin-bottom:6px; }
+    .stock-label    { font-size:.9rem; color:#667085; margin-bottom:16px; }
+    .threshold-info { font-size:.88rem; color:#34699a; background:rgba(88,160,200,.08); border-radius:8px; padding:10px 16px; display:inline-block; }
+    .note  { font-size:.9rem; color:#34699a; margin:20px 0; text-align:center; line-height:1.6; }
+    .cta   { text-align:center; margin:30px 0; }
+    .btn   { display:inline-block; background:linear-gradient(135deg,#58a0c8,#34699a); color:#fff; padding:16px 40px; border-radius:50px; text-decoration:none; font-size:1.1rem; font-weight:700; box-shadow:0 4px 15px rgba(88,160,200,.3); }
+    .footer { background:linear-gradient(135deg,#113f67,#34699a); padding:25px; text-align:center; }
+    .copyright { color:#58a0c8; font-size:.8rem; }
+    @media (max-width:600px) { .container{border-radius:0} .content,.header{padding:20px} .stock-warning,.stock-critical{font-size:2rem} }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="logo"><img src="https://qatalo.s3.us-east-1.amazonaws.com/qatalo.png" alt="Qatalo" width="200" /></div>
+      {% if is_out_of_stock %}
+        <div class="badge-critical">🚨 Producto Agotado</div>
+      {% else %}
+        <div class="badge-warning">⚠️ Stock Bajo</div>
+      {% endif %}
+    </div>
+
+    <div class="content">
+      {% if is_out_of_stock %}
+        <div class="greeting">¡Tu producto se ha agotado!</div>
+        <p class="subtitle">Este producto ya no tiene unidades disponibles en tu tienda <strong>{{ business_name }}</strong>.</p>
+        <div class="alert-box alert-critical">
+          <div class="product-name">{{ product_name }}</div>
+          <div class="stock-critical">0</div>
+          <div class="stock-label">unidades restantes</div>
+          <div class="threshold-info">🔒 El producto fue desactivado automáticamente en tu catálogo</div>
+        </div>
+        <p class="note">
+          Repón tu inventario y actívalo de nuevo desde el panel para que tus clientes puedan comprarlo.
+        </p>
+      {% else %}
+        <div class="greeting">¡Tu stock está bajo!</div>
+        <p class="subtitle">Uno de los productos en tu tienda <strong>{{ business_name }}</strong> necesita atención.</p>
+        <div class="alert-box alert-warning">
+          <div class="product-name">{{ product_name }}</div>
+          <div class="stock-warning">{{ current_stock }}</div>
+          <div class="stock-label">unidades restantes</div>
+          <div class="threshold-info">Tu umbral configurado: {{ threshold }} unidades</div>
+        </div>
+        <p class="note">
+          Es un buen momento para reabastecer tu inventario antes de que se agote por completo.
+          Cuando llegue a cero, el producto se desactivará automáticamente.
+        </p>
+      {% endif %}
+
+      <div class="cta">
+        <a href="{{ admin_url }}" class="btn">Ir a mi panel →</a>
+      </div>
+    </div>
+
+    <div class="footer">
+      <div class="copyright">© 2025 Qatalo. Todos los derechos reservados.</div>
+    </div>
+  </div>
+</body>
+</html>
