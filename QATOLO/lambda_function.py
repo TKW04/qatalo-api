@@ -11,10 +11,13 @@ from users import users_routes
 from paddle import paddle_routes
 from categories import categories_routes
 from offers import offers_routes 
+from delivery_reminder import run_delivery_reminders
 
 
 def lambda_handler(event, context):
     try:
+        if event.get("source") == "aws.events" or event.get("detail-type") == "Scheduled Event":
+            return run_delivery_reminders()
         headers = event.get('headers', {})
         arn = context.invoked_function_arn
         alias = arn.split(":")[-1]

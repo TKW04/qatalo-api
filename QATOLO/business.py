@@ -167,6 +167,9 @@ def create_business(event, user_name, user_id):
             "create_date": datetime.now().isoformat(),
             "update_date": datetime.now().isoformat(),
             "low_stock_threshold": int(data.get("low_stock_threshold", 5) or 5),
+            "delivery_reminder_enabled": bool(
+                data.get("delivery_reminder_enabled", False)
+            ),
         }
         business_table.put_item(Item=item)
         return _resp(
@@ -189,7 +192,8 @@ def update_business(event, user_id, business_id):
                 "SET business_name=:n, business_description=:d, business_slug=:s, "
                 "business_phone=:p, business_logo_url=:l, template_id=:t, "
                 "theme_type=:tt, theme_palette=:tp, localities=:loc, update_date=:u, "
-                "ga_tracking_id=:ga, meta_pixel_id=:mp, low_stock_threshold=:lst"
+                "ga_tracking_id=:ga, meta_pixel_id=:mp, low_stock_threshold=:lst, "
+                "delivery_reminder_enabled=:dre"
             ),
             ExpressionAttributeValues={
                 ":n": data.get("name"),
@@ -204,39 +208,11 @@ def update_business(event, user_id, business_id):
                 ":u": datetime.now().isoformat(),
                 ":ga": data.get("ga_tracking_id", ""),
                 ":mp": data.get("meta_pixel_id", ""),
-                ":lst": int(data.get("low_stock_threshold", 5) or 5)
+                ":lst": int(data.get("low_stock_threshold", 5) or 5),
+                ":dre": bool(data.get("delivery_reminder_enabled", False)),
             },
         )
         return _resp(200, {"message": "Negocio actualizado"})
     except Exception as e:
         print("Error en update_business:", e)
         return _resp(500, {"error": str(e)})
-    # try:
-    #     data = json.loads(event["body"])
-
-    #     existing = business_table.get_item(Key={"business_id": business_id}).get("Item")
-    #     if not existing or existing.get("user_id") != user_id:
-    #         return _resp(404, {"message": "Negocio no encontrado"})
-
-    #     business_table.update_item(
-    #         Key={"business_id": business_id},
-    #         UpdateExpression=(
-    #             "SET business_name=:n, business_description=:d, business_slug=:s, "
-    #             "business_phone=:p, business_logo_url=:l, template_id=:t, "
-    #             "theme_type=:tt, theme_palette=:tp, update_date=:u"
-    #         ),
-    #         ExpressionAttributeValues={
-    #             ":n": data.get("name"),
-    #             ":d": data.get("description"),
-    #             ":s": data.get("slug"),
-    #             ":p": data.get("phone"),
-    #             ":l": data.get("logo_url"),
-    #             ":t": data.get("templateId", "default"),
-    #             ":tt": data.get("themeType", "predefined"),
-    #             ":tp": data.get("themePalette"),
-    #             ":u": datetime.now().isoformat(),
-    #         },
-    #     )
-    #     return _resp(200, {"message": "Negocio actualizado"})
-    # except Exception as e:
-    #     return _resp(500, {"error": str(e)})

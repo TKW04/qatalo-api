@@ -375,3 +375,30 @@ def out_of_stock_alert_email(to_address, product_name, business_name):
     except Exception as e:
         print(json.dumps({"event": "out_of_stock_alert_email", "Error": str(e)}))
 
+def delivery_reminder_email(to_address, business_name, delivery_date, order_groups, admin_url):
+    """Recordatorio diario de entregas — al dueño del negocio, branding Qatalo."""
+    try:
+        from datetime import datetime
+        dt     = datetime.strptime(delivery_date, "%Y-%m-%d")
+        months = ["enero","febrero","marzo","abril","mayo","junio","julio",
+                  "agosto","septiembre","octubre","noviembre","diciembre"]
+        days   = ["lunes","martes","miércoles","jueves","viernes","sábado","domingo"]
+        date_str = f"{days[dt.weekday()]} {dt.day} de {months[dt.month-1]} de {dt.year}"
+
+        mail     = emails.NewEmail(MAIL_API_TOKEN)
+        template = env.get_template("delivery_reminder.html")
+        mail.send({
+            "from": QATALO_FROM,
+            "to":   [{"email": to_address, "name": business_name}],
+            "subject": f"📦 Entregas mañana — {len(order_groups)} orden{'es' if len(order_groups) != 1 else ''}",
+            "html": template.render(
+                business_name=business_name,
+                delivery_date=date_str,
+                order_groups=order_groups,
+                total_orders=len(order_groups),
+                admin_url=admin_url,
+            ),
+        })
+    except Exception as e:
+        print(json.dumps({"event": "delivery_reminder_email", "Error": str(e)}))
+
