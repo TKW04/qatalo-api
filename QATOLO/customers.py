@@ -16,7 +16,7 @@ import uuid
 # pyrefly: ignore [missing-import]
 from requests_toolbelt.multipart import decoder
 from boto3.dynamodb.conditions import Attr
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 
 from SendMails.mails import (
@@ -29,7 +29,10 @@ from SendMails.mails import (
     order_access_code_email,
     low_stock_alert_email,
     out_of_stock_alert_email,
+    invoice_email,
 )
+
+from invoice_generator import build_invoice_pdf, calc_invoice_totals
 
 try:
     from offers import increment_offer_uses
@@ -48,6 +51,7 @@ customers_table = dynamodb.Table("qatalo.customers")
 business_table = dynamodb.Table("qatalo.business")
 payment_methods_table = dynamodb.Table("qatalo.payment_methods")
 products_table = dynamodb.Table("qatalo.products")
+
 USER_POOL_ID = os.environ.get("USER_POOL_ID")
 s3 = boto3.client("s3")
 FRONT_END_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")
@@ -58,6 +62,11 @@ CORS = {
     "Access-Control-Allow-Methods": "*",
 }
 DATE_FMT = "%Y-%m-%d %H:%M:%S"
+
+INVOICE_BUCKET = os.getenv("BUCKET_NAME")
+
+# Estados en los que se permite facturar
+INVOICEABLE_STATUSES = {"Aprobada", "Entregada"}
 
 
 # ----------------- Helpers -----------------
@@ -477,6 +486,34 @@ def _order_details_group(business, members, owner_email, customer_name="", **ext
     return details
 
 
+# ---------- Billing ----------
+
+def _ncf_date():
+    rd = datetime.now(timezone.utc) - timedelta(hours=4)
+    return rd.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _ncf_date_short():
+    rd = datetime.now(timezone.utc) - timedelta(hours=4)
+    return rd.strftime("%d/%m/%Y")
+
+def _assign_ncf_to_order(customer, order_group, ncf):
+    """Guarda el NCF en todas las transacciones del order_group del cliente."""
+    try:
+        txns = customer.get("transactions", [])
+        for t in txns:
+            if (t.get("order_group") or t.get("transaction_id")) == order_group:
+                t["ncf_used"] = ncf
+                t["ncf_date"] = _ncf_date()
+                t["invoice_type"] = "factura"
+        customers_table.update_item(
+            Key={"customer_id": customer["customer_id"]},
+            UpdateExpression="SET transactions=:t",
+            ExpressionAttributeValues={":t": txns},
+        )
+    except Exception as e:
+        print(json.dumps({"event": "_assign_ncf_to_order", "Error": str(e)}))
+
 # ----------------- Router -----------------
 def customers_routes(path, method, event, user_name, user_id, alias):
     # --- Acceso del cliente final (OTP + token) ---
@@ -496,6 +533,8 @@ def customers_routes(path, method, event, user_name, user_id, alias):
         return save_receipt_by_token(event)
     if path == f"/{alias}/customers/orders/cart" and method == "POST":
         return checkout_cart_by_token(event)
+    if path == f"/{alias}/customers/orders/invoice" and method == "POST":
+        return emit_invoice(event=event, user_name=user_name, user_id=user_id)
     if path == f"/{alias}/customers/cart" and method == "POST":
         return create_customer_cart(event)
 
@@ -508,18 +547,6 @@ def customers_routes(path, method, event, user_name, user_id, alias):
         return upload_receipt(event=event)
     if path == f"/{alias}/customers/transactions/cancel" and method == "POST":
         return cancel_transaction(event=event, user_id=None)
-    # n8n
-    if path == f"/{alias}/customers/n8n" and method == "POST":
-        return create_customer_without_transactions(event=event)
-    if path == f"/{alias}/customers/transactions/add/n8n" and method == "POST":
-        return add_transaction_n8n(event=event)
-    if path == f"/{alias}/customers/transactions/upload/n8n" and method == "POST":
-        return upload_receipt(event=event)
-    if "/customers/transactions/get/n8n" in path and method == "GET":
-        m = re.fullmatch(rf"/{alias}/customers/transactions/get/n8n/([^/]+)", path)
-        if m:
-            cid, tid = m.group(1).split("|")[0], m.group(1).split("|")[1]
-            return get_customer_transaction_n8n(transaction_id=tid, customer_id=cid)
 
     # Admin (requieren dueño)
     if path == f"/{alias}/customers" and method == "GET":
@@ -797,7 +824,7 @@ def create_customer_transaction(body):
 
 def create_customer_cart(event):
     try:
-        
+
         body = json.loads(event.get("body", "{}"))
         business_id = body.get("business_id", "")
         email = body.get("email", "").strip()
@@ -902,7 +929,7 @@ def create_customer_cart(event):
                 **customer_details,
                 "upload_link": f"{FRONT_END_URL}/admin",
             }
-            
+
             new_order_create_email(
                 owner_email or "Qatalo",
                 to_name=business.get("business_name", "Qatalo"),
@@ -1401,53 +1428,6 @@ def upload_image(file_info, customer_id=None, transaction_id=None):
         return None
 
 
-# ----------------- n8n -----------------
-def add_transaction_n8n(event):
-    try:
-        body = json.loads(event.get("body", "{}"))
-        customer = _get_customer(body.get("customer_id", ""))
-        if not customer:
-            return _resp(404, {"message": "Cliente no encontrado"})
-        transactions = customer.get("transactions", [])
-        transactions.append(
-            {
-                "transaction_id": str(uuid.uuid4()),
-                "product_id": body.get("product_id", ""),
-                "product_name": body.get("product_name", ""),
-                "quantity": body.get("quantity", 1),
-                "price": Decimal(str(body.get("price", 0) or 0)),
-                "status": "Pendiente de pago",
-                "accept_terms": True,
-                "payment_method": body.get("payment_method", {}),
-                "delivery_day": body.get("delivery_day", ""),
-                "locality": body.get("locality", ""),
-                "create_date": _now(),
-                "create_user": customer.get("email", ""),
-            }
-        )
-        _save_transactions(
-            customer["customer_id"], transactions, customer.get("email", "")
-        )
-        return _resp(200, _map_customer(_get_customer(customer["customer_id"])))
-    except Exception as e:
-        print(json.dumps({"event": "add_transaction_n8n", "Error": str(e)}))
-        return _resp(500, {"message": str(e)})
-
-
-def get_customer_transaction_n8n(transaction_id, customer_id):
-    try:
-        item = _get_customer(customer_id)
-        if not item:
-            return _resp(404, {"message": "Cliente no encontrado"})
-        tx = _find_transaction(item.get("transactions", []), transaction_id)
-        if not tx:
-            return _resp(404, {"message": "Transacción no encontrada"})
-        return _resp(200, tx)
-    except Exception as e:
-        print(json.dumps({"event": "get_customer_transaction_n8n", "Error": str(e)}))
-        return _resp(500, {"message": str(e)})
-
-
 # ----------------- Acceso del cliente final -----------------
 def request_access_code(event):
     try:
@@ -1896,4 +1876,181 @@ def save_receipt_by_token(event):
         return _resp(200, {"message": "Comprobante recibido"})
     except Exception as e:
         print(json.dumps({"event": "save_receipt_by_token", "Error": str(e)}))
+        return _resp(500, {"message": str(e)})
+
+
+# ----------------- Facturacion -----------------
+def emit_invoice(event, user_name, user_id):
+    """
+    POST /orders/invoice
+    body: {
+        order_group, customer_id,
+        with_ncf: bool,          # true=factura, false=recibo
+        ncf_manual: str?,        # opcional: NCF específico a usar
+        action: "download"|"email"   # default download
+    }
+    """
+    try:
+        body        = json.loads(event.get("body", "{}"))
+        order_group = body.get("order_group", "")
+        customer_id = body.get("customer_id", "")
+        with_ncf    = bool(body.get("with_ncf", False))
+        ncf_manual  = (body.get("ncf_manual", "") or "").strip().upper()
+        action      = body.get("action", "download")
+
+        if not order_group or not customer_id:
+            return _resp(400, {"message": "Faltan datos de la orden"})
+
+        # 1) Cargar cliente y sus transacciones del order_group
+        customer = customers_table.get_item(Key={"customer_id": customer_id}).get("Item")
+        if not customer:
+            return _resp(404, {"message": "Cliente no encontrado"})
+
+        all_txns = customer.get("transactions", [])
+        group_txns = [t for t in all_txns if (t.get("order_group") or t.get("transaction_id")) == order_group]
+        if not group_txns:
+            return _resp(404, {"message": "Orden no encontrada"})
+
+        # 2) Validar estado (solo Aprobada/Entregada)
+        status = group_txns[0].get("status", "")
+        if status not in INVOICEABLE_STATUSES:
+            return _resp(400, {"message": f"Solo se puede facturar una orden Aprobada o Entregada (estado actual: {status})"})
+
+        # 3) Cargar negocio (el business_id vive en el CLIENTE, no en la transacción)
+        business_id = customer.get("business_id", "")
+        if not business_id:
+            return _resp(400, {"message": "El cliente no tiene negocio asociado"})
+        business = _get_business(business_id)
+        if not business:
+            return _resp(404, {"message": "Negocio no encontrado"})
+
+        # 4) Manejo de NCF (solo si es factura)
+        assigned_ncf = ""
+        if with_ncf:
+            if not business.get("ncf_enabled", False):
+                return _resp(400, {"message": "Este negocio no tiene NCF habilitado"})
+
+            # ¿La orden ya tiene NCF asignado? → reusar (no consumir otro)
+            existing_ncf = next((t.get("ncf_used") for t in group_txns if t.get("ncf_used")), "")
+            if existing_ncf:
+                assigned_ncf = existing_ncf
+            else:
+                pool = business.get("ncf_pool", []) or []
+                if ncf_manual:
+                    # Validar que el NCF manual exista y no esté usado
+                    entry = next((n for n in pool if n.get("ncf") == ncf_manual), None)
+                    if entry and entry.get("used"):
+                        return _resp(400, {"message": f"El NCF {ncf_manual} ya fue utilizado"})
+                    assigned_ncf = ncf_manual
+                    if entry is None:
+                        # NCF manual no estaba en el pool → agrégalo como usado
+                        pool.append({"ncf": ncf_manual, "used": True, "used_in": order_group, "used_date": _ncf_date()})
+                    else:
+                        entry["used"] = True
+                        entry["used_in"] = order_group
+                        entry["used_date"] = _ncf_date()
+                else:
+                    # Tomar el primer NCF disponible
+                    entry = next((n for n in pool if not n.get("used")), None)
+                    if not entry:
+                        return _resp(400, {"message": "No hay NCF disponibles. Carga más secuencias en Facturación."})
+                    assigned_ncf = entry["ncf"]
+                    entry["used"] = True
+                    entry["used_in"] = order_group
+                    entry["used_date"] = _ncf_date()
+
+                # Guardar el pool actualizado en el negocio
+                business_table.update_item(
+                    Key={"business_id": business_id},
+                    UpdateExpression="SET ncf_pool=:p",
+                    ExpressionAttributeValues={":p": pool},
+                )
+
+                # Persistir el NCF en las transacciones del grupo
+                _assign_ncf_to_order(customer, order_group, assigned_ncf)
+
+        # 5) Construir items para el cálculo
+        raw_items = []
+        for t in group_txns:
+            # Obtener itbis_mode del producto (si la transacción tiene product_id válido)
+            product = {}
+            pid = t.get("product_id", "")
+            if pid:
+                product = products_table.get_item(Key={"product_id": pid}).get("Item") or {}
+            raw_items.append({
+                "product_name":  t.get("product_name", ""),
+                "variant_label": t.get("variant_label", ""),
+                "quantity":      t.get("quantity", 1),
+                "price":         t.get("price", 0),
+                "itbis_mode":    product.get("itbis_mode", "included"),
+                "delivery_price": t.get("delivery_price", 0),
+                "discount_amount": t.get("discount_amount", 0),
+            })
+
+        itbis_rate = float(business.get("itbis_rate", 18) or 18)
+        items_calc, totals = calc_invoice_totals(raw_items, itbis_rate, with_ncf)
+
+        # 6) Metadata
+        first = group_txns[0]
+        cust_name = customer.get("full_name") or f"{customer.get('given_name','')} {customer.get('family_name','')}".strip()
+        meta = {
+            "invoice_type":   "factura" if with_ncf else "recibo",
+            "ncf":            assigned_ncf,
+            "order_ref":      str(order_group)[:8].upper(),
+            "date":           _ncf_date_short(),
+            "currency":       (first.get("currency", "") or "") + " ",
+            "payment_method": (first.get("payment_method") or {}).get("payment_method_name", ""),
+            "status":         status,
+        }
+        customer_data = {
+            "name":    cust_name,
+            "phone":   customer.get("phone", ""),
+            "address": first.get("delivery_address", ""),
+            "email":   customer.get("email", ""),
+        }
+
+        # 7) Generar PDF
+        pdf_bytes = build_invoice_pdf(business, customer_data, items_calc, totals, meta)
+
+        doc_label = "factura" if with_ncf else "recibo"
+        filename = f"invoices/{business_id}/{doc_label}_{meta['order_ref']}_{int(datetime.now().timestamp())}.pdf"
+
+        # 8) Subir a S3
+        s3.put_object(
+            Bucket=INVOICE_BUCKET,
+            Key=filename,
+            Body=pdf_bytes,
+            ContentType="application/pdf",
+        )
+
+        # 9) Acción: email o download
+        if action == "email":
+            if not customer_data["email"]:
+                return _resp(400, {"message": "El cliente no tiene correo registrado"})
+            try:
+                invoice_email(
+                    to_address=customer_data["email"],
+                    customer_name=cust_name,
+                    business=business,
+                    invoice_type=meta["invoice_type"],
+                    order_ref=meta["order_ref"],
+                    pdf_bytes=pdf_bytes,
+                    doc_label=doc_label,
+                )
+                return _resp(200, {"message": "Comprobante enviado al correo del cliente", "ncf": assigned_ncf})
+            except Exception as e:
+                print(json.dumps({"event": "emit_invoice.email", "Error": str(e)}))
+                return _resp(500, {"message": "No se pudo enviar el correo"})
+
+        # download → URL pre-firmada (5 min)
+        url = s3.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": INVOICE_BUCKET, "Key": filename,
+                    "ResponseContentDisposition": f'attachment; filename="{doc_label}_{meta["order_ref"]}.pdf"'},
+            ExpiresIn=300,
+        )
+        return _resp(200, {"url": url, "ncf": assigned_ncf, "invoice_type": meta["invoice_type"]})
+
+    except Exception as e:
+        print(json.dumps({"event": "emit_invoice", "Error": str(e)}))
         return _resp(500, {"message": str(e)})

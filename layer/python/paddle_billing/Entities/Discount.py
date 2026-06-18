@@ -1,0 +1,61 @@
+from __future__ import annotations
+
+from .Entity import Entity
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any
+
+from paddle_billing.Entities.DiscountGroup import DiscountGroup
+from paddle_billing.Entities.Discounts import DiscountMode, DiscountStatus, DiscountType
+from paddle_billing.Entities.Shared import CurrencyCode, ImportMeta, CustomData
+
+
+@dataclass
+class Discount(Entity):
+    id: str
+    status: DiscountStatus
+    description: str
+    enabled_for_checkout: bool
+    code: str | None
+    type: DiscountType
+    amount: str
+    currency_code: CurrencyCode | None
+    recur: bool
+    maximum_recurring_intervals: int | None
+    usage_limit: int | None
+    restrict_to: list[str] | None
+    expires_at: datetime | None
+    times_used: int
+    created_at: datetime
+    updated_at: datetime
+    import_meta: ImportMeta | None
+    custom_data: CustomData | None
+    mode: DiscountMode
+    discount_group_id: str | None
+    discount_group: DiscountGroup | None
+
+    @staticmethod
+    def from_dict(data: dict[str, Any]) -> Discount:
+        return Discount(
+            id=data["id"],
+            status=DiscountStatus(data["status"]),
+            description=data["description"],
+            enabled_for_checkout=data["enabled_for_checkout"],
+            code=data.get("code"),
+            type=DiscountType(data["type"]),
+            amount=data["amount"],
+            recur=data["recur"],
+            maximum_recurring_intervals=data.get("maximum_recurring_intervals"),
+            usage_limit=data.get("usage_limit"),
+            restrict_to=data.get("restrict_to"),
+            times_used=data["times_used"],
+            created_at=datetime.fromisoformat(data["created_at"]),
+            updated_at=datetime.fromisoformat(data["updated_at"]),
+            currency_code=CurrencyCode(data["currency_code"]) if data.get("currency_code") else None,
+            expires_at=datetime.fromisoformat(data["expires_at"]) if data.get("expires_at") else None,
+            import_meta=ImportMeta.from_dict(data["import_meta"]) if data.get("import_meta") else None,
+            custom_data=CustomData(data["custom_data"]) if data.get("custom_data") else None,
+            mode=DiscountMode(data["mode"]),
+            discount_group_id=data.get("discount_group_id"),
+            discount_group=DiscountGroup.from_dict(data["discount_group"]) if data.get("discount_group") else None,
+        )

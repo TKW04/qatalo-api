@@ -1,3 +1,4 @@
+from decimal import Decimal
 import json
 import uuid
 import boto3
@@ -106,6 +107,13 @@ def get_business_by_user_id(user_id: str):
                 "ga_tracking_id": item.get("ga_tracking_id", ""),
                 "meta_pixel_id": item.get("meta_pixel_id", ""),
                 "low_stock_threshold": int(item.get("low_stock_threshold", 5) or 5),
+                "rnc": item.get("rnc", ""),
+                "ncf_enabled": bool(item.get("ncf_enabled", False)),
+                "itbis_rate": float(item.get("itbis_rate", 18) or 18),
+                "ncf_pool": item.get("ncf_pool", []) or [],
+                "delivery_reminder_enabled": bool(
+                    item.get("delivery_reminder_enabled", False)
+                ),
             }
             return _resp(200, business)
         return {"statusCode": 404, "headers": {"Access-Control-Allow-Origin": "*"}}
@@ -136,6 +144,10 @@ def get_business_by_slug(slug: str):
             "ga_tracking_id": item.get("ga_tracking_id", ""),
             "meta_pixel_id": item.get("meta_pixel_id", ""),
             "low_stock_threshold": int(item.get("low_stock_threshold", 5) or 5),
+            "rnc": item.get("rnc", ""),
+            "ncf_enabled": bool(item.get("ncf_enabled", False)),
+            "itbis_rate": float(item.get("itbis_rate", 18) or 18),
+            "ncf_pool": item.get("ncf_pool", []) or [],
         }
         return _resp(200, business)
     except Exception as e:
@@ -170,6 +182,10 @@ def create_business(event, user_name, user_id):
             "delivery_reminder_enabled": bool(
                 data.get("delivery_reminder_enabled", False)
             ),
+            "rnc": data.get("rnc", ""),
+            "ncf_enabled": bool(data.get("ncf_enabled", False)),
+            "itbis_rate": Decimal(str(data.get("itbis_rate", 18) or 18)),
+            "ncf_pool": data.get("ncf_pool", []) or [],
         }
         business_table.put_item(Item=item)
         return _resp(
@@ -193,7 +209,8 @@ def update_business(event, user_id, business_id):
                 "business_phone=:p, business_logo_url=:l, template_id=:t, "
                 "theme_type=:tt, theme_palette=:tp, localities=:loc, update_date=:u, "
                 "ga_tracking_id=:ga, meta_pixel_id=:mp, low_stock_threshold=:lst, "
-                "delivery_reminder_enabled=:dre"
+                "delivery_reminder_enabled=:dre, "
+                "rnc=:rnc, ncf_enabled=:nce, itbis_rate=:itr, ncf_pool=:ncp"
             ),
             ExpressionAttributeValues={
                 ":n": data.get("name"),
@@ -210,6 +227,10 @@ def update_business(event, user_id, business_id):
                 ":mp": data.get("meta_pixel_id", ""),
                 ":lst": int(data.get("low_stock_threshold", 5) or 5),
                 ":dre": bool(data.get("delivery_reminder_enabled", False)),
+                ":rnc": data.get("rnc", ""),
+                ":nce": bool(data.get("ncf_enabled", False)),
+                ":itr": Decimal(str(data.get("itbis_rate", 18) or 18)),
+                ":ncp": data.get("ncf_pool", []) or []
             },
         )
         return _resp(200, {"message": "Negocio actualizado"})

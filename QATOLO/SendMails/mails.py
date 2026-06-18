@@ -1,10 +1,12 @@
-from .email_color_helper import build_email_color_vars
+
 import json
 import os
+import base64
 # pyrefly: ignore [missing-import]
 from mailersend import emails
 # pyrefly: ignore [missing-import]
 from jinja2 import Environment, FileSystemLoader
+from .email_color_helper import build_email_color_vars
 
 env = Environment(loader=FileSystemLoader("templates"))
 MAIL_API_TOKEN = os.getenv('MAIL_API_TOKEN')
@@ -402,3 +404,44 @@ def delivery_reminder_email(to_address, business_name, delivery_date, order_grou
     except Exception as e:
         print(json.dumps({"event": "delivery_reminder_email", "Error": str(e)}))
 
+def invoice_email(to_address, customer_name, business, invoice_type, order_ref, pdf_bytes, doc_label):
+    try:        
+        color_vars = build_email_color_vars(business)
+        biz_name   = business.get("name", "")
+        logo_url   = business.get("logo_url", "")
+
+        is_factura = invoice_type == "factura"
+        doc_title  = "Factura" if is_factura else "Recibo de pago"
+
+        mail = emails.NewEmail(MAIL_API_TOKEN)
+        template = env.get_template("invoice_email.html")
+
+        attachment = {
+            "content":     base64.b64encode(pdf_bytes).decode("utf-8"),
+            "filename":    f"{doc_label}_{order_ref}.pdf",
+            "disposition": "attachment",
+        }
+
+        from_email = _biz_from(business) or "no-reply@qatalo.online"
+        from_name  = biz_name or "Qatalo"
+
+        response = mail.send({
+        "from": _biz_from(business),   # ← ya devuelve {"email": ..., "name": ...}
+        "to":   [{"email": to_address, "name": customer_name}],
+        "subject": f"{doc_title} de tu compra en {biz_name} — #{order_ref}",
+        "html": template.render(
+            customer_name=customer_name,
+            business_name=biz_name,
+            business_logo_url=logo_url,
+            doc_title=doc_title,
+            is_factura=is_factura,
+            order_ref=order_ref,
+            **color_vars,
+        ),
+        "attachments": [attachment],
+    })
+
+        print(json.dumps({"event": "invoice_email.sent", "response": str(response)}))
+
+    except Exception as e:
+        print(json.dumps({"event": "invoice_email.error", "Error": str(e)}))

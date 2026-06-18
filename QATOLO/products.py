@@ -33,14 +33,6 @@ def products_routes(path, method, event, user_name, user_id, alias):
                 if method == "GET":
                     return get_product_dropdown(business_id=business_id)
 
-        if "/products/n8n" in path and method == "GET":
-
-            match = re.fullmatch(rf"/{alias}/products/n8n/([^/]+)", path)
-            if match:
-                business_id = match.group(1)
-
-                return get_products_by_business_id(business_id=business_id)
-
         match = re.fullmatch(rf"/{alias}/products/([^/]+)", path)
         if match:
             product_id = match.group(1)
@@ -131,6 +123,7 @@ def get_products_by_user_id(user_id: str):
                     "low_stock_threshold": item.get(
                         "low_stock_threshold"
                     ),  # None = usa el global del negocio
+                    "itbis_mode": item.get("itbis_mode", "included"),
                 }
             )
         return {
@@ -277,6 +270,9 @@ def create_product(event, user_name, user_id):
                     if data.get("low_stock_threshold") not in (None, "", "null")
                     else None
                 ),
+                "itbis_mode": data.get(
+                    "itbis_mode", "included"
+                ),  # included | added | exempt
                 "user_id": user_id,
                 "create_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "create_user": user_name,
@@ -301,7 +297,8 @@ def update_product(event, user_name, product_id, user_id):
                 "required_delivery_day=:rdd, delivery_start_day=:dsd, currency=:c, "
                 "imagesUrl=:img, category_id=:cat, is_available=:av, localities=:loc, "
                 "is_customizable=:ic, #var=:var, locality_config=:lc, "
-                "user_id=:uid, update_date=:ud, update_user=:uu, low_stock_threshold=:lst"
+                "user_id=:uid, update_date=:ud, update_user=:uu, low_stock_threshold=:lst, "
+                "itbis_mode=:itm, "
             ),
             ExpressionAttributeNames={
                 "#var": "variants"
@@ -335,6 +332,7 @@ def update_product(event, user_name, product_id, user_id):
                     if data.get("low_stock_threshold") not in (None, "", "null")
                     else None
                 ),
+                ":itm": data.get("itbis_mode", "included"),
             },
             ReturnValues="UPDATED_NEW",
         )

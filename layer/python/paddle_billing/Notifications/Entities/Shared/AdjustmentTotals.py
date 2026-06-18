@@ -1,0 +1,28 @@
+from __future__ import annotations
+from dataclasses import dataclass
+from typing import Any
+
+from paddle_billing.Notifications.Entities.Shared.CurrencyCode import CurrencyCode
+
+
+@dataclass
+class AdjustmentTotals:
+    subtotal: str
+    tax: str
+    total: str
+    fee: str
+    earnings: str
+    currency_code: CurrencyCode
+    retained_fee: str | None
+
+    @staticmethod
+    def from_dict(data: dict[str, Any]) -> AdjustmentTotals:
+        return AdjustmentTotals(
+            subtotal=data["subtotal"],
+            tax=data["tax"],
+            total=data["total"],
+            fee=data["fee"],
+            earnings=data["earnings"],
+            currency_code=CurrencyCode(data["currency_code"]),
+            retained_fee=data.get("retained_fee"),
+        )

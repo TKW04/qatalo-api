@@ -1,0 +1,25 @@
+from paddle_billing.PaddleStrEnum import PaddleStrEnum, PaddleStrEnumMeta
+
+
+class PaymentMethodType(PaddleStrEnum, metaclass=PaddleStrEnumMeta):
+    Alipay: "PaymentMethodType" = "alipay"
+    ApplePay: "PaymentMethodType" = "apple_pay"
+    Bancontact: "PaymentMethodType" = "bancontact"
+    Blik: "PaymentMethodType" = "blik"
+    Card: "PaymentMethodType" = "card"
+    GooglePay: "PaymentMethodType" = "google_pay"
+    Ideal: "PaymentMethodType" = "ideal"
+    KakaoPay: "PaymentMethodType" = "kakao_pay"
+    KoreaLocal: "PaymentMethodType" = "korea_local"
+    MbWay: "PaymentMethodType" = "mb_way"
+    NaverPay: "PaymentMethodType" = "naver_pay"
+    Offline: "PaymentMethodType" = "offline"
+    Payco: "PaymentMethodType" = "payco"
+    Paypal: "PaymentMethodType" = "paypal"
+    Pix: "PaymentMethodType" = "pix"
+    SamsungPay: "PaymentMethodType" = "samsung_pay"
+    SouthKoreaLocalCard: "PaymentMethodType" = "south_korea_local_card"
+    Unknown: "PaymentMethodType" = "unknown"
+    Upi: "PaymentMethodType" = "upi"
+    WechatPay: "PaymentMethodType" = "wechat_pay"
+    WireTransfer: "PaymentMethodType" = "wire_transfer"
