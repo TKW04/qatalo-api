@@ -298,7 +298,7 @@ def update_product(event, user_name, product_id, user_id):
                 "imagesUrl=:img, category_id=:cat, is_available=:av, localities=:loc, "
                 "is_customizable=:ic, #var=:var, locality_config=:lc, "
                 "user_id=:uid, update_date=:ud, update_user=:uu, low_stock_threshold=:lst, "
-                "itbis_mode=:itm, "
+                "itbis_mode=:itm"
             ),
             ExpressionAttributeNames={
                 "#var": "variants"

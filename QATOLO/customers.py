@@ -251,7 +251,9 @@ def _validate_cart_stock(items):
     """
     for item in items:
         product_id = item.get("product_id")
-        variant_id = item.get("variant_id")
+        variant_id = (item.get("variant") or {}).get("variant_id") or item.get(
+            "variant_id"
+        )  # ← ajustado
         qty = int(item.get("quantity", 1))
 
         product = products_table.get_item(Key={"product_id": product_id}).get("Item")
@@ -488,6 +490,7 @@ def _order_details_group(business, members, owner_email, customer_name="", **ext
 
 # ---------- Billing ----------
 
+
 def _ncf_date():
     rd = datetime.now(timezone.utc) - timedelta(hours=4)
     return rd.strftime("%Y-%m-%d %H:%M:%S")
@@ -496,6 +499,7 @@ def _ncf_date():
 def _ncf_date_short():
     rd = datetime.now(timezone.utc) - timedelta(hours=4)
     return rd.strftime("%d/%m/%Y")
+
 
 def _assign_ncf_to_order(customer, order_group, ncf):
     """Guarda el NCF en todas las transacciones del order_group del cliente."""
@@ -513,6 +517,7 @@ def _assign_ncf_to_order(customer, order_group, ncf):
         )
     except Exception as e:
         print(json.dumps({"event": "_assign_ncf_to_order", "Error": str(e)}))
+
 
 # ----------------- Router -----------------
 def customers_routes(path, method, event, user_name, user_id, alias):
@@ -861,6 +866,8 @@ def create_customer_cart(event):
                     if it.get("fulfillment_type") == "delivery"
                     else ""
                 ),
+                "variant": it.get("variant", {}),  # ← AGREGAR
+                "variant_label": it.get("variant_label", ""),  # ← AGREGAR
                 "offer_id": offer_id,
                 "offer_name": offer_name,
                 "offer_code": offer_code,
@@ -1691,6 +1698,8 @@ def checkout_cart_by_token(event):
                     if it.get("fulfillment_type") == "delivery"
                     else ""
                 ),
+                "variant": it.get("variant", {}),  # ← AGREGAR
+                "variant_label": it.get("variant_label", ""),  # ← AGREGAR
                 "offer_id": offer_id,
                 "offer_name": offer_name,
                 "offer_code": offer_code,
@@ -1891,30 +1900,41 @@ def emit_invoice(event, user_name, user_id):
     }
     """
     try:
-        body        = json.loads(event.get("body", "{}"))
+        body = json.loads(event.get("body", "{}"))
         order_group = body.get("order_group", "")
         customer_id = body.get("customer_id", "")
-        with_ncf    = bool(body.get("with_ncf", False))
-        ncf_manual  = (body.get("ncf_manual", "") or "").strip().upper()
-        action      = body.get("action", "download")
+        with_ncf = bool(body.get("with_ncf", False))
+        ncf_manual = (body.get("ncf_manual", "") or "").strip().upper()
+        action = body.get("action", "download")
 
         if not order_group or not customer_id:
             return _resp(400, {"message": "Faltan datos de la orden"})
 
         # 1) Cargar cliente y sus transacciones del order_group
-        customer = customers_table.get_item(Key={"customer_id": customer_id}).get("Item")
+        customer = customers_table.get_item(Key={"customer_id": customer_id}).get(
+            "Item"
+        )
         if not customer:
             return _resp(404, {"message": "Cliente no encontrado"})
 
         all_txns = customer.get("transactions", [])
-        group_txns = [t for t in all_txns if (t.get("order_group") or t.get("transaction_id")) == order_group]
+        group_txns = [
+            t
+            for t in all_txns
+            if (t.get("order_group") or t.get("transaction_id")) == order_group
+        ]
         if not group_txns:
             return _resp(404, {"message": "Orden no encontrada"})
 
         # 2) Validar estado (solo Aprobada/Entregada)
         status = group_txns[0].get("status", "")
         if status not in INVOICEABLE_STATUSES:
-            return _resp(400, {"message": f"Solo se puede facturar una orden Aprobada o Entregada (estado actual: {status})"})
+            return _resp(
+                400,
+                {
+                    "message": f"Solo se puede facturar una orden Aprobada o Entregada (estado actual: {status})"
+                },
+            )
 
         # 3) Cargar negocio (el business_id vive en el CLIENTE, no en la transacción)
         business_id = customer.get("business_id", "")
@@ -1931,7 +1951,9 @@ def emit_invoice(event, user_name, user_id):
                 return _resp(400, {"message": "Este negocio no tiene NCF habilitado"})
 
             # ¿La orden ya tiene NCF asignado? → reusar (no consumir otro)
-            existing_ncf = next((t.get("ncf_used") for t in group_txns if t.get("ncf_used")), "")
+            existing_ncf = next(
+                (t.get("ncf_used") for t in group_txns if t.get("ncf_used")), ""
+            )
             if existing_ncf:
                 assigned_ncf = existing_ncf
             else:
@@ -1940,11 +1962,20 @@ def emit_invoice(event, user_name, user_id):
                     # Validar que el NCF manual exista y no esté usado
                     entry = next((n for n in pool if n.get("ncf") == ncf_manual), None)
                     if entry and entry.get("used"):
-                        return _resp(400, {"message": f"El NCF {ncf_manual} ya fue utilizado"})
+                        return _resp(
+                            400, {"message": f"El NCF {ncf_manual} ya fue utilizado"}
+                        )
                     assigned_ncf = ncf_manual
                     if entry is None:
                         # NCF manual no estaba en el pool → agrégalo como usado
-                        pool.append({"ncf": ncf_manual, "used": True, "used_in": order_group, "used_date": _ncf_date()})
+                        pool.append(
+                            {
+                                "ncf": ncf_manual,
+                                "used": True,
+                                "used_in": order_group,
+                                "used_date": _ncf_date(),
+                            }
+                        )
                     else:
                         entry["used"] = True
                         entry["used_in"] = order_group
@@ -1953,7 +1984,12 @@ def emit_invoice(event, user_name, user_id):
                     # Tomar el primer NCF disponible
                     entry = next((n for n in pool if not n.get("used")), None)
                     if not entry:
-                        return _resp(400, {"message": "No hay NCF disponibles. Carga más secuencias en Facturación."})
+                        return _resp(
+                            400,
+                            {
+                                "message": "No hay NCF disponibles. Carga más secuencias en Facturación."
+                            },
+                        )
                     assigned_ncf = entry["ncf"]
                     entry["used"] = True
                     entry["used_in"] = order_group
@@ -1976,37 +2012,46 @@ def emit_invoice(event, user_name, user_id):
             product = {}
             pid = t.get("product_id", "")
             if pid:
-                product = products_table.get_item(Key={"product_id": pid}).get("Item") or {}
-            raw_items.append({
-                "product_name":  t.get("product_name", ""),
-                "variant_label": t.get("variant_label", ""),
-                "quantity":      t.get("quantity", 1),
-                "price":         t.get("price", 0),
-                "itbis_mode":    product.get("itbis_mode", "included"),
-                "delivery_price": t.get("delivery_price", 0),
-                "discount_amount": t.get("discount_amount", 0),
-            })
+                product = (
+                    products_table.get_item(Key={"product_id": pid}).get("Item") or {}
+                )
+            raw_items.append(
+                {
+                    "product_name": t.get("product_name", ""),
+                    "variant_label": t.get("variant_label", ""),
+                    "quantity": t.get("quantity", 1),
+                    "price": t.get("price", 0),
+                    "itbis_mode": product.get("itbis_mode", "included"),
+                    "delivery_price": t.get("delivery_price", 0),
+                    "discount_amount": t.get("discount_amount", 0),
+                }
+            )
 
         itbis_rate = float(business.get("itbis_rate", 18) or 18)
         items_calc, totals = calc_invoice_totals(raw_items, itbis_rate, with_ncf)
 
         # 6) Metadata
         first = group_txns[0]
-        cust_name = customer.get("full_name") or f"{customer.get('given_name','')} {customer.get('family_name','')}".strip()
+        cust_name = (
+            customer.get("full_name")
+            or f"{customer.get('given_name','')} {customer.get('family_name','')}".strip()
+        )
         meta = {
-            "invoice_type":   "factura" if with_ncf else "recibo",
-            "ncf":            assigned_ncf,
-            "order_ref":      str(order_group)[:8].upper(),
-            "date":           _ncf_date_short(),
-            "currency":       (first.get("currency", "") or "") + " ",
-            "payment_method": (first.get("payment_method") or {}).get("payment_method_name", ""),
-            "status":         status,
+            "invoice_type": "factura" if with_ncf else "recibo",
+            "ncf": assigned_ncf,
+            "order_ref": str(order_group)[:8].upper(),
+            "date": _ncf_date_short(),
+            "currency": (first.get("currency", "") or "") + " ",
+            "payment_method": (first.get("payment_method") or {}).get(
+                "payment_method_name", ""
+            ),
+            "status": status,
         }
         customer_data = {
-            "name":    cust_name,
-            "phone":   customer.get("phone", ""),
+            "name": cust_name,
+            "phone": customer.get("phone", ""),
             "address": first.get("delivery_address", ""),
-            "email":   customer.get("email", ""),
+            "email": customer.get("email", ""),
         }
 
         # 7) Generar PDF
@@ -2037,7 +2082,13 @@ def emit_invoice(event, user_name, user_id):
                     pdf_bytes=pdf_bytes,
                     doc_label=doc_label,
                 )
-                return _resp(200, {"message": "Comprobante enviado al correo del cliente", "ncf": assigned_ncf})
+                return _resp(
+                    200,
+                    {
+                        "message": "Comprobante enviado al correo del cliente",
+                        "ncf": assigned_ncf,
+                    },
+                )
             except Exception as e:
                 print(json.dumps({"event": "emit_invoice.email", "Error": str(e)}))
                 return _resp(500, {"message": "No se pudo enviar el correo"})
@@ -2045,11 +2096,16 @@ def emit_invoice(event, user_name, user_id):
         # download → URL pre-firmada (5 min)
         url = s3.generate_presigned_url(
             "get_object",
-            Params={"Bucket": INVOICE_BUCKET, "Key": filename,
-                    "ResponseContentDisposition": f'attachment; filename="{doc_label}_{meta["order_ref"]}.pdf"'},
+            Params={
+                "Bucket": INVOICE_BUCKET,
+                "Key": filename,
+                "ResponseContentDisposition": f'attachment; filename="{doc_label}_{meta["order_ref"]}.pdf"',
+            },
             ExpiresIn=300,
         )
-        return _resp(200, {"url": url, "ncf": assigned_ncf, "invoice_type": meta["invoice_type"]})
+        return _resp(
+            200, {"url": url, "ncf": assigned_ncf, "invoice_type": meta["invoice_type"]}
+        )
 
     except Exception as e:
         print(json.dumps({"event": "emit_invoice", "Error": str(e)}))

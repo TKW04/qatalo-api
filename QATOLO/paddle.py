@@ -19,6 +19,10 @@ def paddle_routes(event, method, path, alias):
     # obtener productos
     if path == f"/{alias}/paddle/products" and method.upper() == "GET":
         return get_plans(alias=alias)
+    
+    # Cambia esta ruta:
+    if path == f"/{alias}/paddle/reactivation-prices" and method.upper() == "GET":
+        return get_reactivation_prices(alias=alias)
 
     match = re.fullmatch(
         rf'/{alias}/paddle/subscription/([^/]+)', path)
@@ -77,7 +81,40 @@ def get_plans(alias: str):
             "body": json.dumps({"error": str(e)})
         }
 
+def get_reactivation_prices(alias: str):
+    """Devuelve los planes SIN trial para reactivación (mensual, trimestral, anual)."""
+    try:
+        ids = os.environ.get("PADDLE_REACTIVATION_PRICE_IDS", "")
+        if not ids:
+            return {"statusCode": 404, "headers": {"Access-Control-Allow-Origin": "*"},
+                    "body": json.dumps({"message": "No hay planes de reactivación configurados"})}
 
+        PADDLE_API_KEY = os.environ.get(f'PADDLE_API_KEY_{alias.upper()}', '')
+        PADDLE_API_BASE = os.environ.get(f'PADDLE_API_BASE_{alias.upper()}', 'https://api.paddle.com')
+        headers = {"Authorization": f"Bearer {PADDLE_API_KEY}", "Content-Type": "application/json"}
+
+        prices = []
+        for price_id in [p.strip() for p in ids.split(",") if p.strip()]:
+            resp = requests.get(f"{PADDLE_API_BASE}/prices/{price_id}", headers=headers, timeout=10)
+            resp.raise_for_status()
+            d = resp.json().get("data", {})
+            bc = d.get("billing_cycle", {}) or {}
+            prices.append({
+                "price_id": d.get("id"),
+                "product_id": d.get("product_id", ""),
+                "product_name": d.get("name", ""),
+                "currency": d.get("unit_price", {}).get("currency_code"),
+                "unit_price": int(d.get("unit_price", {}).get("amount", 0)) / 100 if d.get("unit_price") else 0,
+                "billing_interval": bc.get("interval"),      # month | year
+                "billing_frequency": bc.get("frequency"),    # 1 | 3 | 1
+            })
+
+        return {"statusCode": 200, "headers": {"Access-Control-Allow-Origin": "*"},
+                "body": json.dumps(prices, ensure_ascii=False)}
+    except Exception as e:
+        print(json.dumps({"event": "get_reactivation_prices", "Error": str(e)}))
+        return {"statusCode": 500, "headers": {"Access-Control-Allow-Origin": "*"},
+                "body": json.dumps({"error": str(e)})}
 def verify_paddle_signature(event, alias: str):
 
     verifier = Verifier(300)
