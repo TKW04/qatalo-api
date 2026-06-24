@@ -79,7 +79,7 @@ def run_delivery_reminders():
             continue
 
         groups_for_email = [
-            {**g["meta"], "items": g["items"]}
+            {**g["meta"], "order_items": g["items"]}
             for g in groups.values()
         ]
 

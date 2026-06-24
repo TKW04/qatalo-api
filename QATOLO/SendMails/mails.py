@@ -1,4 +1,5 @@
 
+import traceback
 import json
 import os
 import base64
@@ -378,7 +379,6 @@ def out_of_stock_alert_email(to_address, product_name, business_name):
         print(json.dumps({"event": "out_of_stock_alert_email", "Error": str(e)}))
 
 def delivery_reminder_email(to_address, business_name, delivery_date, order_groups, admin_url):
-    """Recordatorio diario de entregas — al dueño del negocio, branding Qatalo."""
     try:
         from datetime import datetime
         dt     = datetime.strptime(delivery_date, "%Y-%m-%d")
@@ -387,22 +387,37 @@ def delivery_reminder_email(to_address, business_name, delivery_date, order_grou
         days   = ["lunes","martes","miércoles","jueves","viernes","sábado","domingo"]
         date_str = f"{days[dt.weekday()]} {dt.day} de {months[dt.month-1]} de {dt.year}"
 
-        mail     = emails.NewEmail(MAIL_API_TOKEN)
+        mail = emails.NewEmail(MAIL_API_TOKEN)
+
+        mail_body = {}
+
+        mail.set_mail_from(QATALO_FROM, mail_body)
+        mail.set_mail_to([{"email": to_address, "name": business_name}], mail_body)
+        mail.set_subject(
+            f"📦 Entregas mañana — {len(order_groups)} orden{'es' if len(order_groups) != 1 else ''}",
+            mail_body
+        )
+
         template = env.get_template("delivery_reminder.html")
-        mail.send({
-            "from": QATALO_FROM,
-            "to":   [{"email": to_address, "name": business_name}],
-            "subject": f"📦 Entregas mañana — {len(order_groups)} orden{'es' if len(order_groups) != 1 else ''}",
-            "html": template.render(
+        mail.set_html_content(
+            template.render(
                 business_name=business_name,
                 delivery_date=date_str,
                 order_groups=order_groups,
                 total_orders=len(order_groups),
                 admin_url=admin_url,
             ),
-        })
+            mail_body
+        )
+
+        mail.send(mail_body)
+
     except Exception as e:
-        print(json.dumps({"event": "delivery_reminder_email", "Error": str(e)}))
+        print(json.dumps({
+            "event": "delivery_reminder_email",
+            "Error": str(e),
+            "traceback": traceback.format_exc()
+        }))
 
 def invoice_email(to_address, customer_name, business, invoice_type, order_ref, pdf_bytes, doc_label):
     try:        
