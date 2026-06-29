@@ -568,6 +568,10 @@ def customers_routes(path, method, event, user_name, user_id, alias):
         return cancel_transaction(event=event, user_id=user_id)
     if path == f"/{alias}/customers/transactions/delivered" and method == "POST":
         return delivered_transaction(event=event, user_id=user_id)
+    if path == f"/{alias}/customers/transactions/payment-method" and method == "POST":
+        return change_order_payment_method(event=event, user_id=user_id)
+    if path == f"/{alias}/customers/transactions/reactivate" and method == "POST":
+        return reactivate_transaction(event=event, user_id=user_id)
 
     m = re.fullmatch(rf"/{alias}/customers/phone/([^/]+)", path)
     if m:
@@ -1176,6 +1180,7 @@ def cancel_transaction(event, user_id=None):
         reason = body.get("cancellation_reason", "No especificada")
         for m in members:
             prev = m.get("status")
+            m["status_before_cancel"] = prev   # ← AGREGAR: recordar dónde estaba
             m["status"] = "Cancelada"
             m["cancellation_reason"] = reason
             if prev in ("Aprobada", "Entregada"):
@@ -1320,7 +1325,122 @@ def delete_transaction(event, user_id=None):
         print(json.dumps({"event": "delete_transaction", "Error": str(e)}))
         return _resp(500, {"message": str(e)})
 
+def change_order_payment_method(event, user_id=None):
+    """Cambia el método de pago de TODAS las transacciones de un order_group.
+    No altera el estado de la orden."""
+    try:
+        body = json.loads(event.get("body", "{}"))
+        customer = _get_customer(body.get("customer_id", ""))
+        if not customer:
+            return _resp(404, {"message": "Cliente no encontrado"})
+        err = _check_owner(customer, user_id)
+        if err:
+            return err
 
+        transactions = customer.get("transactions", [])
+        tx = _find_transaction(transactions, body.get("transaction_id", ""))
+        if not tx:
+            return _resp(404, {"message": "Transacción no encontrada"})
+
+        # No permitir en órdenes entregadas o canceladas
+        status = tx.get("status", "")
+        if status in ("Entregada", "Cancelada"):
+            return _resp(
+                400,
+                {"message": f"No se puede cambiar el método de una orden {status}"},
+            )
+
+        # Cargar el método de pago completo desde la tabla
+        pm_id = body.get("payment_method_id", "")
+        payment_method = payment_methods_table.get_item(
+            Key={"payment_method_id": pm_id}
+        ).get("Item", {})
+        if not payment_method:
+            return _resp(404, {"message": "Método de pago no encontrado"})
+
+        # Actualizar todas las transacciones del grupo
+        members = _group_members(transactions, tx)
+        for m in members:
+            m["payment_method"] = payment_method
+
+        _save_transactions(
+            customer["customer_id"], transactions, customer.get("email", "")
+        )
+        return _resp(
+            200,
+            {
+                "message": "Método de pago actualizado",
+                "payment_method": payment_method,
+            },
+        )
+    except Exception as e:
+        print(json.dumps({"event": "change_order_payment_method", "Error": str(e)}))
+        return _resp(500, {"message": str(e)})
+
+def reactivate_transaction(event, user_id=None):
+    """Reactiva una orden cancelada, devolviéndola a su estado previo.
+    Si vuelve a un estado que descuenta stock (Aprobada/Entregada), lo descuenta de nuevo."""
+    try:
+        body = json.loads(event.get("body", "{}"))
+        customer = _get_customer(body.get("customer_id", ""))
+        if not customer:
+            return _resp(404, {"message": "Cliente no encontrado"})
+        err = _check_owner(customer, user_id)
+        if err:
+            return err
+        transactions = customer.get("transactions", [])
+        tx = _find_transaction(transactions, body.get("transaction_id", ""))
+        if not tx:
+            return _resp(404, {"message": "Transacción no encontrada"})
+
+        if tx.get("status") != "Cancelada":
+            return _resp(400, {"message": "Solo se pueden reactivar órdenes canceladas"})
+
+        members = _group_members(transactions, tx)
+
+        # Validar stock ANTES de reactivar, si vuelve a un estado que descuenta
+        for m in members:
+            restore_to = m.get("status_before_cancel", "Pendiente de pago")
+            if restore_to in ("Aprobada", "Entregada"):
+                product_id = m.get("product_id", "")
+                variant_id = (m.get("variant") or {}).get("variant_id")
+                qty = int(m.get("quantity", 1) or 1)
+                product = products_table.get_item(Key={"product_id": product_id}).get("Item")
+                if product:
+                    if variant_id:
+                        variant = next((v for v in product.get("variants", [])
+                                        if v.get("variant_id") == variant_id), None)
+                        stock = int(variant.get("quantity", 0)) if variant else 0
+                    else:
+                        stock = int(product.get("quantity", 0))
+                    if stock < qty:
+                        return _resp(400, {
+                            "error": "stock_insuficiente",
+                            "product_name": m.get("product_name", ""),
+                            "available": stock,
+                            "requested": qty,
+                            "message": f"No hay stock suficiente de \"{m.get('product_name','')}\" para reactivar.",
+                        })
+
+        # Reactivar: restaurar estado y reponer descuento de stock si aplica
+        for m in members:
+            restore_to = m.get("status_before_cancel", "Pendiente de pago")
+            m["status"] = restore_to
+            m.pop("cancellation_reason", None)
+            m.pop("status_before_cancel", None)
+            if restore_to in ("Aprobada", "Entregada"):
+                _adjust_stock(
+                    m.get("product_id", ""),
+                    -int(m.get("quantity", 1) or 1),
+                    customer.get("email", ""),
+                    variant_id=(m.get("variant") or {}).get("variant_id"),
+                )
+
+        _save_transactions(customer["customer_id"], transactions, customer.get("email", ""))
+        return _resp(200, {"message": "Orden reactivada"})
+    except Exception as e:
+        print(json.dumps({"event": "reactivate_transaction", "Error": str(e)}))
+        return _resp(500, {"message": str(e)})
 # ----------------- Recibo -----------------
 def upload_receipt(event):
     try:
