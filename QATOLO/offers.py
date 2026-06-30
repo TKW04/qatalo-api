@@ -54,6 +54,7 @@ def _map(item):
         "valid_until": item.get("valid_until", ""),
         "buy_quantity": int(item.get("buy_quantity", 0) or 0),
         "paid_quantity": int(item.get("paid_quantity", 0) or 0),
+        "priority": item.get("priority", "media"),
         "create_date": item.get("create_date", ""),
         "update_date": item.get("update_date", ""),
     }
@@ -126,6 +127,7 @@ def _build_item(data, biz_id, offer_id=None):
         "valid_until": data.get("valid_until", ""),
         "buy_quantity": int(data.get("buy_quantity", 0) or 0),
         "paid_quantity": int(data.get("paid_quantity", 0) or 0),
+        "priority": (data.get("priority", "media") or "media").lower(),
         "update_date": _now(),
     }
     return item
@@ -169,7 +171,7 @@ def update_offer(event, offer_id, user_id):
                 "discount_type=:dt, discount_value=:dv, applies_to=:at, "
                 "product_ids=:pi, category_ids=:ci, min_order_amount=:moa, "
                 "max_uses=:mu, valid_from=:vf, valid_until=:vu, update_date=:ud, "
-                "buy_quantity=:bq, paid_quantity=:pq"
+                "buy_quantity=:bq, paid_quantity=:pq, priority=:prio"
             ),
             ExpressionAttributeNames={"#nm": "name", "#trig": "trigger"},
             ExpressionAttributeValues={
@@ -189,6 +191,7 @@ def update_offer(event, offer_id, user_id):
                 ":vu": item["valid_until"],
                 ":bq": item["buy_quantity"],
                 ":pq": item["paid_quantity"],
+                ":prio": item["priority"],
                 ":ud": _now(),
             },
         )
@@ -215,7 +218,7 @@ def delete_offer(offer_id, user_id):
 
 # ───────── Public ─────────
 def get_active_offers(business_id):
-    """Devuelve ofertas activas y válidas para el catálogo público."""
+    """Devuelve ofertas activas y validas para el catalogo publico."""
     try:
         today = _today()
         items = offers_table.scan(
