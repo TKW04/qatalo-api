@@ -114,6 +114,11 @@ def get_business_by_user_id(user_id: str):
                 "delivery_reminder_enabled": bool(
                     item.get("delivery_reminder_enabled", False)
                 ),
+                # Tipografía y logo (fallback = comportamiento actual)
+                "fontHeading": item.get("font_heading", "default"),
+                "fontBody": item.get("font_body", "default"),
+                "fontScale": item.get("font_scale", "medium"),
+                "logoScale": item.get("logo_scale", "medium"),
             }
             return _resp(200, business)
         return {"statusCode": 404, "headers": {"Access-Control-Allow-Origin": "*"}}
@@ -148,6 +153,11 @@ def get_business_by_slug(slug: str):
             "ncf_enabled": bool(item.get("ncf_enabled", False)),
             "itbis_rate": float(item.get("itbis_rate", 18) or 18),
             "ncf_pool": item.get("ncf_pool", []) or [],
+            # Tipografía y logo (fallback = comportamiento actual)
+            "fontHeading": item.get("font_heading", "default"),
+            "fontBody": item.get("font_body", "default"),
+            "fontScale": item.get("font_scale", "medium"),
+            "logoScale": item.get("logo_scale", "medium"),
         }
         return _resp(200, business)
     except Exception as e:
@@ -186,6 +196,11 @@ def create_business(event, user_name, user_id):
             "ncf_enabled": bool(data.get("ncf_enabled", False)),
             "itbis_rate": Decimal(str(data.get("itbis_rate", 18) or 18)),
             "ncf_pool": data.get("ncf_pool", []) or [],
+            # Tipografía y logo
+            "font_heading": data.get("fontHeading", "default"),
+            "font_body": data.get("fontBody", "default"),
+            "font_scale": data.get("fontScale", "medium"),
+            "logo_scale": data.get("logoScale", "medium"),
         }
         business_table.put_item(Item=item)
         return _resp(
@@ -198,7 +213,6 @@ def create_business(event, user_name, user_id):
 def update_business(event, user_id, business_id):
     try:
         data = json.loads(event["body"])
-        print("data:", data)
         existing = business_table.get_item(Key={"business_id": business_id}).get("Item")
         if not existing or existing.get("user_id") != user_id:
             return _resp(404, {"message": "Negocio no encontrado"})
@@ -210,7 +224,8 @@ def update_business(event, user_id, business_id):
                 "theme_type=:tt, theme_palette=:tp, localities=:loc, update_date=:u, "
                 "ga_tracking_id=:ga, meta_pixel_id=:mp, low_stock_threshold=:lst, "
                 "delivery_reminder_enabled=:dre, "
-                "rnc=:rnc, ncf_enabled=:nce, itbis_rate=:itr, ncf_pool=:ncp"
+                "rnc=:rnc, ncf_enabled=:nce, itbis_rate=:itr, ncf_pool=:ncp, "
+                "font_heading=:fh, font_body=:fb, font_scale=:fs, logo_scale=:ls"
             ),
             ExpressionAttributeValues={
                 ":n": data.get("name"),
@@ -230,7 +245,11 @@ def update_business(event, user_id, business_id):
                 ":rnc": data.get("rnc", ""),
                 ":nce": bool(data.get("ncf_enabled", False)),
                 ":itr": Decimal(str(data.get("itbis_rate", 18) or 18)),
-                ":ncp": data.get("ncf_pool", []) or []
+                ":ncp": data.get("ncf_pool", []) or [],
+                ":fh": data.get("font_heading", "default"),
+                ":fb": data.get("font_body", "default"),
+                ":fs": data.get("font_scale", "medium"),
+                ":ls": data.get("logo_scale", "medium"),
             },
         )
         return _resp(200, {"message": "Negocio actualizado"})
