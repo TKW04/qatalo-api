@@ -872,6 +872,7 @@ def create_customer_cart(event):
                 ),
                 "variant": it.get("variant", {}),  # ← AGREGAR
                 "variant_label": it.get("variant_label", ""),  # ← AGREGAR
+                "comment": it.get("comment", ""),  # ← personalización del cliente
                 "offer_id": offer_id,
                 "offer_name": offer_name,
                 "offer_code": offer_code,
@@ -1820,6 +1821,7 @@ def checkout_cart_by_token(event):
                 ),
                 "variant": it.get("variant", {}),  # ← AGREGAR
                 "variant_label": it.get("variant_label", ""),  # ← AGREGAR
+                "comment": it.get("comment", ""),  # ← personalización del cliente
                 "offer_id": offer_id,
                 "offer_name": offer_name,
                 "offer_code": offer_code,

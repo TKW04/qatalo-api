@@ -124,6 +124,19 @@ def get_products_by_user_id(user_id: str):
                         "low_stock_threshold"
                     ),  # None = usa el global del negocio
                     "itbis_mode": item.get("itbis_mode", "included"),
+                    "allow_comment": bool(
+                        item.get("allow_comment", False)
+                        if item.get("allow_comment", False)
+                        in [True, "true", "True", 1, "1"]
+                        else False
+                    ),
+                    "comment_required": bool(
+                        item.get("comment_required", False)
+                        if item.get("comment_required", False)
+                        in [True, "true", "True", 1, "1"]
+                        else False
+                    ),
+                    "comment_label": item.get("comment_label", ""),
                 }
             )
         return {
@@ -209,6 +222,19 @@ def get_products_by_business_id(business_id: str):
                     ),
                     "variants": item.get("variants", []) or [],
                     "locality_config": item.get("locality_config", []) or [],
+                    "allow_comment": bool(
+                        item.get("allow_comment", False)
+                        if item.get("allow_comment", False)
+                        in [True, "true", "True", 1, "1"]
+                        else False
+                    ),
+                    "comment_required": bool(
+                        item.get("comment_required", False)
+                        if item.get("comment_required", False)
+                        in [True, "true", "True", 1, "1"]
+                        else False
+                    ),
+                    "comment_label": item.get("comment_label", ""),
                 }
             )
         return {
@@ -273,6 +299,9 @@ def create_product(event, user_name, user_id):
                 "itbis_mode": data.get(
                     "itbis_mode", "included"
                 ),  # included | added | exempt
+                "allow_comment": bool(data.get("allow_comment", False)),
+                "comment_required": bool(data.get("comment_required", False)),
+                "comment_label": data.get("comment_label", "").strip(),
                 "user_id": user_id,
                 "create_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "create_user": user_name,
@@ -298,7 +327,7 @@ def update_product(event, user_name, product_id, user_id):
                 "imagesUrl=:img, category_id=:cat, is_available=:av, localities=:loc, "
                 "is_customizable=:ic, #var=:var, locality_config=:lc, "
                 "user_id=:uid, update_date=:ud, update_user=:uu, low_stock_threshold=:lst, "
-                "itbis_mode=:itm"
+                "itbis_mode=:itm, allow_comment=:ac, comment_required=:cr, comment_label=:cl"
             ),
             ExpressionAttributeNames={
                 "#var": "variants"
@@ -333,6 +362,9 @@ def update_product(event, user_name, product_id, user_id):
                     else None
                 ),
                 ":itm": data.get("itbis_mode", "included"),
+                ":ac": bool(data.get("allow_comment", False)),
+                ":cr": bool(data.get("comment_required", False)),
+                ":cl": data.get("comment_label", "").strip(),
             },
             ReturnValues="UPDATED_NEW",
         )
@@ -455,6 +487,9 @@ def import_products(event, user_name, user_id):
                         "locality_config": [],
                         "is_customizable": False,
                         "variants": [],
+                        "allow_comment": False,
+                        "comment_required": False,
+                        "comment_label": "",
                         "ga_tracking_id": "",
                         "meta_pixel_id": "",
                         "user_id": user_id,
