@@ -12,6 +12,8 @@ from paddle import paddle_routes
 from categories import categories_routes
 from offers import offers_routes 
 from delivery_reminder import run_delivery_reminders
+from suggestions import suggestions_routes
+from root import root_routes
 
 
 def lambda_handler(event, context):
@@ -37,6 +39,8 @@ def lambda_handler(event, context):
         path = event.get('rawPath', '')
         method = event.get('requestContext', {}).get(
             'http', {}).get('method', '')
+        if "/root/" in path:
+            return root_routes(path=path, method=method, event=event, alias=alias)
         if "paddle" in path:
             return paddle_routes(event, method=method, path=path, alias=alias)
         if "users" in path:
@@ -55,6 +59,9 @@ def lambda_handler(event, context):
             return contact_team_routes(path=path, method=method, event=event, alias=alias)
         if "offers" in path:
             return offers_routes(path=path, method=method, event=event, user_id=user_id, alias=alias)
+        if "suggestions" in path:
+            return suggestions_routes(path=path, method=method, event=event, user_name=user_name, user_id=user_id, alias=alias)
+        
     except Exception as e:
         print(f"Error processing request: {str(e)}")
         return {
