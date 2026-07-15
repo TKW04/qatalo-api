@@ -119,6 +119,8 @@ def get_business_by_user_id(user_id: str):
                 "fontBody": item.get("font_body", "default"),
                 "fontScale": item.get("font_scale", "medium"),
                 "logoScale": item.get("logo_scale", "medium"),
+                # Fuentes subidas por el negocio
+                "custom_fonts": item.get("custom_fonts", []) or [],
             }
             return _resp(200, business)
         return {"statusCode": 404, "headers": {"Access-Control-Allow-Origin": "*"}}
@@ -158,6 +160,8 @@ def get_business_by_slug(slug: str):
             "fontBody": item.get("font_body", "default"),
             "fontScale": item.get("font_scale", "medium"),
             "logoScale": item.get("logo_scale", "medium"),
+            # Fuentes subidas por el negocio
+            "custom_fonts": item.get("custom_fonts", []) or [],
         }
         return _resp(200, business)
     except Exception as e:
@@ -201,6 +205,8 @@ def create_business(event, user_name, user_id):
             "font_body": data.get("fontBody", "default"),
             "font_scale": data.get("fontScale", "medium"),
             "logo_scale": data.get("logoScale", "medium"),
+            # Fuentes subidas por el negocio
+            "custom_fonts": data.get("custom_fonts", []) or [],
         }
         business_table.put_item(Item=item)
         return _resp(
@@ -225,7 +231,8 @@ def update_business(event, user_id, business_id):
                 "ga_tracking_id=:ga, meta_pixel_id=:mp, low_stock_threshold=:lst, "
                 "delivery_reminder_enabled=:dre, "
                 "rnc=:rnc, ncf_enabled=:nce, itbis_rate=:itr, ncf_pool=:ncp, "
-                "font_heading=:fh, font_body=:fb, font_scale=:fs, logo_scale=:ls"
+                "font_heading=:fh, font_body=:fb, font_scale=:fs, logo_scale=:ls, "
+                "custom_fonts=:cf"
             ),
             ExpressionAttributeValues={
                 ":n": data.get("name"),
@@ -250,6 +257,7 @@ def update_business(event, user_id, business_id):
                 ":fb": data.get("font_body", "default"),
                 ":fs": data.get("font_scale", "medium"),
                 ":ls": data.get("logo_scale", "medium"),
+                ":cf": data.get("custom_fonts", []) or [],
             },
         )
         return _resp(200, {"message": "Negocio actualizado"})
