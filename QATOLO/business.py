@@ -9,6 +9,26 @@ from boto3.dynamodb.conditions import Attr
 dynamodb = boto3.resource("dynamodb", region_name=os.getenv("AWS_REGION"))
 business_table = dynamodb.Table("qatalo.business")
 s3 = boto3.client("s3")
+cognito = boto3.client("cognito-idp")
+USER_POOL_ID = os.environ.get("USER_POOL_ID")
+
+# Estados en los que el catálogo público se OCULTA (dueño sin suscripción vigente).
+# past_due se deja pasar (periodo de gracia por cargo rebotado).
+CATALOG_HIDDEN_STATUSES = {"canceled", "paused"}
+
+
+def _owner_sub_status(user_id):
+    """Lee custom:transaction_status del dueño desde Cognito (fresco)."""
+    if not user_id:
+        return ""
+    try:
+        user = cognito.admin_get_user(UserPoolId=USER_POOL_ID, Username=user_id)
+        attrs = {a["Name"]: a["Value"] for a in user.get("UserAttributes", [])}
+        return attrs.get("custom:transaction_status", "") or ""
+    except Exception as e:
+        print(json.dumps({"event": "_owner_sub_status", "user_id": user_id, "Error": str(e)}))
+        return ""
+
 
 CORS = {"Access-Control-Allow-Origin": "*"}
 
@@ -121,6 +141,10 @@ def get_business_by_user_id(user_id: str):
                 "logoScale": item.get("logo_scale", "medium"),
                 # Fuentes subidas por el negocio
                 "custom_fonts": item.get("custom_fonts", []) or [],
+                "business_hours_enabled": bool(item.get("business_hours_enabled", False)),
+                "hours_mode": item.get("hours_mode", "inform"),
+                "business_hours": item.get("business_hours", {}) or {},
+                "locality_hours": item.get("locality_hours", {}) or {},
             }
             return _resp(200, business)
         return {"statusCode": 404, "headers": {"Access-Control-Allow-Origin": "*"}}
@@ -136,6 +160,18 @@ def get_business_by_slug(slug: str):
         if not items:
             return _resp(404, {"message": "Catálogo no encontrado"})
         item = items[0]
+
+        # Si el dueño no tiene suscripción vigente (cancelada/pausada), ocultar el catálogo.
+        # Devolvemos solo la marca para mostrar una pantalla neutra de "no disponible".
+        owner_status = _owner_sub_status(item.get("user_id", ""))
+        if owner_status in CATALOG_HIDDEN_STATUSES:
+            return _resp(200, {
+                "catalog_disabled": True,
+                "name": item.get("business_name"),
+                "logo_url": item.get("business_logo_url"),
+                "themeType": item.get("theme_type", "predefined"),
+                "themePalette": item.get("theme_palette") or {},
+            })
         business = {
             "business_id": item.get("business_id"),
             "name": item.get("business_name"),
@@ -162,6 +198,10 @@ def get_business_by_slug(slug: str):
             "logoScale": item.get("logo_scale", "medium"),
             # Fuentes subidas por el negocio
             "custom_fonts": item.get("custom_fonts", []) or [],
+                "business_hours_enabled": bool(item.get("business_hours_enabled", False)),
+                "hours_mode": item.get("hours_mode", "inform"),
+                "business_hours": item.get("business_hours", {}) or {},
+                "locality_hours": item.get("locality_hours", {}) or {},
         }
         return _resp(200, business)
     except Exception as e:
@@ -207,6 +247,10 @@ def create_business(event, user_name, user_id):
             "logo_scale": data.get("logoScale", "medium"),
             # Fuentes subidas por el negocio
             "custom_fonts": data.get("custom_fonts", []) or [],
+            "business_hours_enabled": bool(data.get("business_hours_enabled", False)),
+            "hours_mode": data.get("hours_mode", "inform"),
+            "business_hours": data.get("business_hours", {}) or {},
+            "locality_hours": data.get("locality_hours", {}) or {},
         }
         business_table.put_item(Item=item)
         return _resp(
@@ -232,7 +276,8 @@ def update_business(event, user_id, business_id):
                 "delivery_reminder_enabled=:dre, "
                 "rnc=:rnc, ncf_enabled=:nce, itbis_rate=:itr, ncf_pool=:ncp, "
                 "font_heading=:fh, font_body=:fb, font_scale=:fs, logo_scale=:ls, "
-                "custom_fonts=:cf"
+                "custom_fonts=:cf, business_hours_enabled=:bhe, hours_mode=:hm, "
+                "business_hours=:bh, locality_hours=:lh"
             ),
             ExpressionAttributeValues={
                 ":n": data.get("name"),
@@ -258,6 +303,10 @@ def update_business(event, user_id, business_id):
                 ":fs": data.get("font_scale", "medium"),
                 ":ls": data.get("logo_scale", "medium"),
                 ":cf": data.get("custom_fonts", []) or [],
+                ":bhe": bool(data.get("business_hours_enabled", False)),
+                ":hm": data.get("hours_mode", "inform"),
+                ":bh": data.get("business_hours", {}) or {},
+                ":lh": data.get("locality_hours", {}) or {},
             },
         )
         return _resp(200, {"message": "Negocio actualizado"})

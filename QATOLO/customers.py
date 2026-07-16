@@ -301,23 +301,6 @@ def _validate_cart_stock(items):
 
     return True, None
 
-
-def _notify_n8n(customer_phone, transaction_id, status):
-    try:
-        requests.post(
-            url="https://n8n.qatalo.online/webhook/transactionStatus",
-            headers={"Content-Type": "application/json"},
-            json={
-                "customer_id": customer_phone,
-                "transaction_id": transaction_id,
-                "transaction_status": status,
-            },
-            timeout=5,
-        )
-    except Exception as e:
-        print(json.dumps({"event": "notify_n8n", "Error": str(e)}))
-
-
 def _order_details(business, transaction, owner_email, customer_name="", **extra):
     qty = int(transaction.get("quantity", 1) or 1)
     price = Decimal(str(transaction.get("price", 0) or 0))
@@ -522,6 +505,7 @@ def _assign_ncf_to_order(customer, order_group, ncf):
 # ----------------- Router -----------------
 def customers_routes(path, method, event, user_name, user_id, alias):
     # --- Acceso del cliente final (OTP + token) ---
+    
     if path == f"/{alias}/customers/access/request" and method == "POST":
         return request_access_code(event)
     if path == f"/{alias}/customers/access/verify" and method == "POST":
@@ -572,6 +556,8 @@ def customers_routes(path, method, event, user_name, user_id, alias):
         return change_order_payment_method(event=event, user_id=user_id)
     if path == f"/{alias}/customers/transactions/reactivate" and method == "POST":
         return reactivate_transaction(event=event, user_id=user_id)
+    if path == f"/{alias}/customers/transactions/apply-offer" and method == "POST":
+        return apply_offer_to_order(event=event, user_id=user_id)
 
     m = re.fullmatch(rf"/{alias}/customers/phone/([^/]+)", path)
     if m:
@@ -1087,7 +1073,6 @@ def approve_transaction(event, user_id=None):
         )
         business = _get_business(customer.get("business_id", "")) or {}
         owner_email = _owner_email(business)
-        # _notify_n8n(customer.get("phone", ""), tx.get("transaction_id", ""), "Aprobada")
         try:
             order_verified_email(
                 customer.get("email"),
@@ -1441,6 +1426,88 @@ def reactivate_transaction(event, user_id=None):
         return _resp(200, {"message": "Orden reactivada"})
     except Exception as e:
         print(json.dumps({"event": "reactivate_transaction", "Error": str(e)}))
+        return _resp(500, {"message": str(e)})
+
+def apply_offer_to_order(event, user_id=None):
+    """Aplica (o quita) un descuento a una orden ya creada, desde el admin.
+    Escribe price/original_price/discount_amount por transaction_id en TODAS
+    las transacciones del order_group, y guarda offer_id/offer_name/offer_code.
+    Solo permitido en 'Pendiente de pago' y 'Pendiente de validación'.
+    offer_id vacío = quitar el descuento (restaura precios).
+    body: {
+        customer_id, transaction_id,
+        offer_id, offer_name, offer_code,
+        items: [{ transaction_id, price, original_price, discount_amount }]
+    }
+    """
+    try:
+        body = json.loads(event.get("body", "{}"))
+        customer = _get_customer(body.get("customer_id", ""))
+        if not customer:
+            return _resp(404, {"message": "Cliente no encontrado"})
+        err = _check_owner(customer, user_id)
+        if err:
+            return err
+
+        transactions = customer.get("transactions", [])
+        tx = _find_transaction(transactions, body.get("transaction_id", ""))
+        if not tx:
+            return _resp(404, {"message": "Transacción no encontrada"})
+
+        # Solo en órdenes pendientes
+        status = tx.get("status", "")
+        if status not in ("Pendiente de pago", "Pendiente de validación"):
+            return _resp(
+                400,
+                {"message": f"No se puede aplicar un descuento a una orden {status or 'sin estado'}"},
+            )
+
+        offer_id = body.get("offer_id", "") or ""
+        offer_name = body.get("offer_name", "") or ""
+        offer_code = (body.get("offer_code", "") or "").upper()
+
+        # Mapa de valores por transaction_id enviados por el frontend
+        items_map = {
+            it.get("transaction_id", ""): it
+            for it in (body.get("items", []) or [])
+        }
+
+        members = _group_members(transactions, tx)
+        for m in members:
+            vals = items_map.get(m.get("transaction_id", ""))
+            if vals is not None:
+                m["price"] = Decimal(str(vals.get("price", m.get("price", 0)) or 0))
+                m["original_price"] = Decimal(
+                    str(vals.get("original_price", m.get("original_price", 0)) or 0)
+                )
+                m["discount_amount"] = Decimal(
+                    str(vals.get("discount_amount", 0) or 0)
+                )
+            # Metadata de la oferta en todas las transacciones del grupo
+            m["offer_id"] = offer_id
+            m["offer_name"] = offer_name
+            m["offer_code"] = offer_code
+
+        _save_transactions(
+            customer["customer_id"], transactions, customer.get("email", "")
+        )
+        return _resp(
+            200,
+            {
+                "message": "Descuento aplicado" if offer_id else "Descuento removido",
+                "offer_id": offer_id,
+            },
+        )
+    except Exception as e:
+        print(
+            json.dumps(
+                {
+                    "event": "apply_offer_to_order",
+                    "Error": str(e),
+                    "trace": traceback.format_exc(),
+                }
+            )
+        )
         return _resp(500, {"message": str(e)})
 # ----------------- Recibo -----------------
 def upload_receipt(event):

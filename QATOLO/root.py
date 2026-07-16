@@ -303,6 +303,7 @@ def get_businesses():
                     "cognito_status": profile["user_status"],
                     "cognito_groups": profile["groups"],
                     "subscription": profile["custom"],  # atributos custom (suscripción/plan/etc.)
+                    "subscription_status": profile["custom"].get("transaction_status", ""),
                     "owner_since": profile["created_at"],
                     "products_count": products_count,
                     "customers_count": customers_count,
