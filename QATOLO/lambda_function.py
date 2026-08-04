@@ -134,6 +134,7 @@ def lambda_handler(event, context):
                     "message": "Tu suscripción no está activa. Reactívala para continuar.",
                 })
 
+        print("Esta es la ruta")
         if "/root/" in path:
             return root_routes(path=path, method=method, event=event, alias=alias)
         if "paddle" in path:

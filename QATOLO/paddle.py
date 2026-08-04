@@ -32,8 +32,9 @@ def paddle_routes(event, method, path, alias):
             return get_subscription(subscription_id=subscription_id, alias=alias)
 
     # webhook
+
     if path == f"/{alias}/paddle/webhook" and method.upper() == "POST":
-        verify_paddle_signature(event=event, alias=alias)
+        return verify_paddle_signature(event=event, alias=alias)
 
     return {"statusCode": 404, "body": "Not found"}
 
