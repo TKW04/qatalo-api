@@ -134,7 +134,6 @@ def lambda_handler(event, context):
                     "message": "Tu suscripción no está activa. Reactívala para continuar.",
                 })
 
-        print("Esta es la ruta")
         if "/root/" in path:
             return root_routes(path=path, method=method, event=event, alias=alias)
         if "paddle" in path:
@@ -151,7 +150,6 @@ def lambda_handler(event, context):
             return products_routes(path=path, method=method, event=event, user_name=user_name, user_id=user_id, alias=alias)
         if "payment_methods" in path:
             return payment_methods_routes(path=path, method=method, event=event, user_name=user_name, user_id=user_id, alias=alias)
-
         if "team" in path:
             return contact_team_routes(path=path, method=method, event=event, alias=alias)
         if "offers" in path:
