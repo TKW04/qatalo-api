@@ -145,6 +145,7 @@ def get_business_by_user_id(user_id: str):
                 "hours_mode": item.get("hours_mode", "inform"),
                 "business_hours": item.get("business_hours", {}) or {},
                 "locality_hours": item.get("locality_hours", {}) or {},
+                "product_settings": item.get("product_settings", {"out_of_stock": "normal"}) or {"out_of_stock": "normal"},
             }
             return _resp(200, business)
         return {"statusCode": 404, "headers": {"Access-Control-Allow-Origin": "*"}}
@@ -202,6 +203,7 @@ def get_business_by_slug(slug: str):
                 "hours_mode": item.get("hours_mode", "inform"),
                 "business_hours": item.get("business_hours", {}) or {},
                 "locality_hours": item.get("locality_hours", {}) or {},
+                "product_settings": item.get("product_settings", {"out_of_stock": "normal"}) or {"out_of_stock": "normal"},
         }
         return _resp(200, business)
     except Exception as e:
@@ -251,6 +253,7 @@ def create_business(event, user_name, user_id):
             "hours_mode": data.get("hours_mode", "inform"),
             "business_hours": data.get("business_hours", {}) or {},
             "locality_hours": data.get("locality_hours", {}) or {},
+            "product_settings": data.get("product_settings", {"out_of_stock": "normal"}) or {"out_of_stock": "normal"},
         }
         business_table.put_item(Item=item)
         return _resp(
@@ -277,7 +280,7 @@ def update_business(event, user_id, business_id):
                 "rnc=:rnc, ncf_enabled=:nce, itbis_rate=:itr, ncf_pool=:ncp, "
                 "font_heading=:fh, font_body=:fb, font_scale=:fs, logo_scale=:ls, "
                 "custom_fonts=:cf, business_hours_enabled=:bhe, hours_mode=:hm, "
-                "business_hours=:bh, locality_hours=:lh"
+                "business_hours=:bh, locality_hours=:lh, product_settings=:ps"
             ),
             ExpressionAttributeValues={
                 ":n": data.get("name"),
@@ -307,6 +310,7 @@ def update_business(event, user_id, business_id):
                 ":hm": data.get("hours_mode", "inform"),
                 ":bh": data.get("business_hours", {}) or {},
                 ":lh": data.get("locality_hours", {}) or {},
+                ":ps": data.get("product_settings", {"out_of_stock": "normal"}) or {"out_of_stock": "normal"},
             },
         )
         return _resp(200, {"message": "Negocio actualizado"})
