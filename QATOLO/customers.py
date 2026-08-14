@@ -332,6 +332,7 @@ def _map_customer(item):
         "phone": item.get("phone", ""),
         "age": int(item.get("age", 0)),
         "delivery_day": item.get("delivery_day", ""),
+        "create_date": item.get("create_date", ""),
         "transactions": item.get("transactions", []),
     }
 

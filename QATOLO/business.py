@@ -154,10 +154,30 @@ def get_business_by_user_id(user_id: str):
 
 
 def get_business_by_slug(slug: str):
-    """Catálogo público por slug (sin autenticación)."""
+    """Catálogo público por slug (sin autenticación). Insensible a mayúsculas/minúsculas."""
     try:
+        slug_norm = (slug or "").strip().lower()
+
+        # 1) Intento exacto (rápido, cubre el caso normal ya en minúsculas)
         response = business_table.scan(FilterExpression=Attr("business_slug").eq(slug))
         items = response.get("Items", [])
+
+        # 2) Si no hubo match exacto, buscamos sin distinguir mayúsculas.
+        #    DynamoDB no tiene lower() en el filtro, así que comparamos en Python.
+        if not items:
+            scan_kwargs = {}
+            found = None
+            while True:
+                page = business_table.scan(**scan_kwargs)
+                for it in page.get("Items", []):
+                    if (it.get("business_slug", "") or "").strip().lower() == slug_norm:
+                        found = it
+                        break
+                if found or "LastEvaluatedKey" not in page:
+                    break
+                scan_kwargs["ExclusiveStartKey"] = page["LastEvaluatedKey"]
+            items = [found] if found else []
+
         if not items:
             return _resp(404, {"message": "Catálogo no encontrado"})
         item = items[0]
@@ -199,11 +219,11 @@ def get_business_by_slug(slug: str):
             "logoScale": item.get("logo_scale", "medium"),
             # Fuentes subidas por el negocio
             "custom_fonts": item.get("custom_fonts", []) or [],
-                "business_hours_enabled": bool(item.get("business_hours_enabled", False)),
-                "hours_mode": item.get("hours_mode", "inform"),
-                "business_hours": item.get("business_hours", {}) or {},
-                "locality_hours": item.get("locality_hours", {}) or {},
-                "product_settings": item.get("product_settings", {"out_of_stock": "normal"}) or {"out_of_stock": "normal"},
+            "business_hours_enabled": bool(item.get("business_hours_enabled", False)),
+            "hours_mode": item.get("hours_mode", "inform"),
+            "business_hours": item.get("business_hours", {}) or {},
+            "locality_hours": item.get("locality_hours", {}) or {},
+            "product_settings": item.get("product_settings", {"out_of_stock": "normal"}) or {"out_of_stock": "normal"},
         }
         return _resp(200, business)
     except Exception as e:
