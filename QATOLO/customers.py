@@ -559,6 +559,8 @@ def customers_routes(path, method, event, user_name, user_id, alias):
         return reactivate_transaction(event=event, user_id=user_id)
     if path == f"/{alias}/customers/transactions/apply-offer" and method == "POST":
         return apply_offer_to_order(event=event, user_id=user_id)
+    if path == f"/{alias}/customers/merge" and method == "POST":
+        return merge_customers(event=event, user_name=user_name, user_id=user_id)
 
     m = re.fullmatch(rf"/{alias}/customers/phone/([^/]+)", path)
     if m:
@@ -1041,6 +1043,92 @@ def delete_customer(customer_id, user_id):
         return _resp(200, {"message": "Cliente eliminado correctamente"})
     except Exception as e:
         print(json.dumps({"event": "delete_customer", "Error": str(e)}))
+        return _resp(500, {"message": str(e)})
+
+
+def merge_customers(event, user_name, user_id):
+    """
+    POST /customers/merge
+    body: {
+        keep_customer_id, remove_customer_id,
+        given_name, family_name, email, phone   # valores elegidos por el dueño
+    }
+    Combina las transacciones de ambos clientes en 'keep_customer_id',
+    aplica los datos elegidos, conserva la fecha de alta MÁS ANTIGUA
+    (para no perder antigüedad real), y elimina 'remove_customer_id'.
+    """
+    try:
+        body = json.loads(event.get("body", "{}"))
+        keep_id = body.get("keep_customer_id", "")
+        remove_id = body.get("remove_customer_id", "")
+
+        if not keep_id or not remove_id:
+            return _resp(400, {"message": "Faltan los clientes a fusionar"})
+        if keep_id == remove_id:
+            return _resp(400, {"message": "Selecciona dos clientes distintos"})
+
+        keep_customer = _get_customer(keep_id)
+        remove_customer = _get_customer(remove_id)
+        if not keep_customer or not remove_customer:
+            return _resp(404, {"message": "Uno de los clientes no existe"})
+
+        # Autorización: el dueño debe serlo de ambos negocios (normalmente el mismo)
+        for c in (keep_customer, remove_customer):
+            err = _check_owner(c, user_id)
+            if err:
+                return err
+
+        if keep_customer.get("business_id", "") != remove_customer.get("business_id", ""):
+            return _resp(400, {"message": "Los clientes pertenecen a negocios distintos"})
+
+        # Combinar transacciones (no llevan referencia al customer_id, así que
+        # una simple concatenación preserva todo el historial de ambos).
+        merged_transactions = (keep_customer.get("transactions", []) or []) + (
+            remove_customer.get("transactions", []) or []
+        )
+
+        # Antigüedad real: la fecha de alta MÁS ANTIGUA entre los dos.
+        keep_created = keep_customer.get("create_date", "") or ""
+        remove_created = remove_customer.get("create_date", "") or ""
+        earliest_created = min(
+            [d for d in (keep_created, remove_created) if d], default=_now()
+        )
+
+        given_name = (body.get("given_name") or keep_customer.get("given_name", "")).strip()
+        family_name = (body.get("family_name") or keep_customer.get("family_name", "")).strip()
+        email = (body.get("email") or keep_customer.get("email", "")).strip()
+        phone = (body.get("phone") or keep_customer.get("phone", "")).strip()
+
+        customers_table.update_item(
+            Key={"customer_id": keep_id},
+            UpdateExpression=(
+                "SET given_name=:g, family_name=:f, email=:e, phone=:p, "
+                "transactions=:t, create_date=:cd, update_date=:ud, update_user=:uu"
+            ),
+            ExpressionAttributeValues={
+                ":g": given_name,
+                ":f": family_name,
+                ":e": email,
+                ":p": phone,
+                ":t": merged_transactions,
+                ":cd": earliest_created,
+                ":ud": _now(),
+                ":uu": user_name,
+            },
+        )
+
+        customers_table.delete_item(Key={"customer_id": remove_id})
+
+        return _resp(
+            200,
+            {
+                "message": "Clientes fusionados correctamente",
+                "customer_id": keep_id,
+                "transactions_moved": len(remove_customer.get("transactions", []) or []),
+            },
+        )
+    except Exception as e:
+        print(json.dumps({"event": "merge_customers", "Error": str(e)}))
         return _resp(500, {"message": str(e)})
 
 

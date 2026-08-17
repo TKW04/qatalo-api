@@ -145,7 +145,8 @@ def get_business_by_user_id(user_id: str):
                 "hours_mode": item.get("hours_mode", "inform"),
                 "business_hours": item.get("business_hours", {}) or {},
                 "locality_hours": item.get("locality_hours", {}) or {},
-                "product_settings": item.get("product_settings", {"out_of_stock": "normal"}) or {"out_of_stock": "normal"},
+                "product_settings": item.get("product_settings", {"out_of_stock": "normal", "home_mode": "all"}) or {"out_of_stock": "normal", "home_mode": "all"},
+                "custom_style": item.get("custom_style", {}) or {},
             }
             return _resp(200, business)
         return {"statusCode": 404, "headers": {"Access-Control-Allow-Origin": "*"}}
@@ -154,30 +155,10 @@ def get_business_by_user_id(user_id: str):
 
 
 def get_business_by_slug(slug: str):
-    """Catálogo público por slug (sin autenticación). Insensible a mayúsculas/minúsculas."""
+    """Catálogo público por slug (sin autenticación)."""
     try:
-        slug_norm = (slug or "").strip().lower()
-
-        # 1) Intento exacto (rápido, cubre el caso normal ya en minúsculas)
         response = business_table.scan(FilterExpression=Attr("business_slug").eq(slug))
         items = response.get("Items", [])
-
-        # 2) Si no hubo match exacto, buscamos sin distinguir mayúsculas.
-        #    DynamoDB no tiene lower() en el filtro, así que comparamos en Python.
-        if not items:
-            scan_kwargs = {}
-            found = None
-            while True:
-                page = business_table.scan(**scan_kwargs)
-                for it in page.get("Items", []):
-                    if (it.get("business_slug", "") or "").strip().lower() == slug_norm:
-                        found = it
-                        break
-                if found or "LastEvaluatedKey" not in page:
-                    break
-                scan_kwargs["ExclusiveStartKey"] = page["LastEvaluatedKey"]
-            items = [found] if found else []
-
         if not items:
             return _resp(404, {"message": "Catálogo no encontrado"})
         item = items[0]
@@ -219,11 +200,12 @@ def get_business_by_slug(slug: str):
             "logoScale": item.get("logo_scale", "medium"),
             # Fuentes subidas por el negocio
             "custom_fonts": item.get("custom_fonts", []) or [],
-            "business_hours_enabled": bool(item.get("business_hours_enabled", False)),
-            "hours_mode": item.get("hours_mode", "inform"),
-            "business_hours": item.get("business_hours", {}) or {},
-            "locality_hours": item.get("locality_hours", {}) or {},
-            "product_settings": item.get("product_settings", {"out_of_stock": "normal"}) or {"out_of_stock": "normal"},
+                "business_hours_enabled": bool(item.get("business_hours_enabled", False)),
+                "hours_mode": item.get("hours_mode", "inform"),
+                "business_hours": item.get("business_hours", {}) or {},
+                "locality_hours": item.get("locality_hours", {}) or {},
+                "product_settings": item.get("product_settings", {"out_of_stock": "normal", "home_mode": "all"}) or {"out_of_stock": "normal", "home_mode": "all"},
+                "custom_style": item.get("custom_style", {}) or {},
         }
         return _resp(200, business)
     except Exception as e:
@@ -273,7 +255,8 @@ def create_business(event, user_name, user_id):
             "hours_mode": data.get("hours_mode", "inform"),
             "business_hours": data.get("business_hours", {}) or {},
             "locality_hours": data.get("locality_hours", {}) or {},
-            "product_settings": data.get("product_settings", {"out_of_stock": "normal"}) or {"out_of_stock": "normal"},
+            "product_settings": data.get("product_settings", {"out_of_stock": "normal", "home_mode": "all"}) or {"out_of_stock": "normal", "home_mode": "all"},
+            "custom_style": data.get("custom_style", {}) or {},
         }
         business_table.put_item(Item=item)
         return _resp(
@@ -300,7 +283,7 @@ def update_business(event, user_id, business_id):
                 "rnc=:rnc, ncf_enabled=:nce, itbis_rate=:itr, ncf_pool=:ncp, "
                 "font_heading=:fh, font_body=:fb, font_scale=:fs, logo_scale=:ls, "
                 "custom_fonts=:cf, business_hours_enabled=:bhe, hours_mode=:hm, "
-                "business_hours=:bh, locality_hours=:lh, product_settings=:ps"
+                "business_hours=:bh, locality_hours=:lh, product_settings=:ps, custom_style=:cs"
             ),
             ExpressionAttributeValues={
                 ":n": data.get("name"),
@@ -330,7 +313,8 @@ def update_business(event, user_id, business_id):
                 ":hm": data.get("hours_mode", "inform"),
                 ":bh": data.get("business_hours", {}) or {},
                 ":lh": data.get("locality_hours", {}) or {},
-                ":ps": data.get("product_settings", {"out_of_stock": "normal"}) or {"out_of_stock": "normal"},
+                ":ps": data.get("product_settings", {"out_of_stock": "normal", "home_mode": "all"}) or {"out_of_stock": "normal", "home_mode": "all"},
+                ":cs": data.get("custom_style", {}) or {},
             },
         )
         return _resp(200, {"message": "Negocio actualizado"})
