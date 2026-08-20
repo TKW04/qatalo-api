@@ -752,6 +752,7 @@ def create_customer_transaction(body):
             "product_name": transaction.get("product_name", ""),
             "quantity": transaction.get("quantity", 1),
             "price": Decimal(str(transaction.get("price", 0) or 0)),
+            "currency": transaction.get("currency", ""),  # ← moneda elegida por el cliente en el producto
             "status": "Pendiente de pago",
             "accept_terms": transaction.get("accept_terms", False),
             "payment_method": payment_method,
@@ -849,6 +850,7 @@ def create_customer_cart(event):
                 "product_name": it.get("product_name", ""),
                 "quantity": it.get("quantity", 1),
                 "price": Decimal(str(it.get("price", 0) or 0)),
+                "currency": it.get("currency", ""),  # ← moneda elegida por el cliente en el producto
                 "status": "Pendiente de pago",
                 "accept_terms": it.get("accept_terms", True),
                 "payment_method": payment_method,
@@ -1371,6 +1373,7 @@ def add_transaction(event, user_id=None):
                 "product_name": body.get("product_name", ""),
                 "quantity": body.get("quantity", 1),
                 "price": Decimal(str(body.get("price", 0) or 0)),
+                "currency": body.get("currency", "") or (body.get("payment_method", {}) or {}).get("currency", ""),
                 "status": "Pendiente de pago",
                 "accept_terms": True,
                 "payment_method": body.get("payment_method", {}),
@@ -1867,6 +1870,7 @@ def add_transaction_by_token(event):
             "product_name": transaction.get("product_name", ""),
             "quantity": transaction.get("quantity", 1),
             "price": Decimal(str(transaction.get("price", 0) or 0)),
+            "currency": transaction.get("currency", ""),  # ← moneda elegida por el cliente en el producto
             "status": "Pendiente de pago",
             "accept_terms": transaction.get("accept_terms", True),
             "payment_method": payment_method,
@@ -1974,6 +1978,7 @@ def checkout_cart_by_token(event):
                 "product_name": it.get("product_name", ""),
                 "quantity": it.get("quantity", 1),
                 "price": Decimal(str(it.get("price", 0) or 0)),
+                "currency": it.get("currency", ""),  # ← moneda elegida por el cliente en el producto
                 "status": "Pendiente de pago",
                 "accept_terms": it.get("accept_terms", True),
                 "payment_method": payment_method,
