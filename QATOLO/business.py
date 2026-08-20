@@ -155,10 +155,30 @@ def get_business_by_user_id(user_id: str):
 
 
 def get_business_by_slug(slug: str):
-    """Catálogo público por slug (sin autenticación)."""
+    """Catálogo público por slug (sin autenticación). Insensible a mayúsculas/minúsculas."""
     try:
+        slug_norm = (slug or "").strip().lower()
+
+        # 1) Intento exacto (rápido, cubre el caso normal ya en minúsculas)
         response = business_table.scan(FilterExpression=Attr("business_slug").eq(slug))
         items = response.get("Items", [])
+
+        # 2) Si no hubo match exacto, buscamos sin distinguir mayúsculas.
+        #    DynamoDB no tiene lower() en el filtro, así que comparamos en Python.
+        if not items:
+            scan_kwargs = {}
+            found = None
+            while True:
+                page = business_table.scan(**scan_kwargs)
+                for it in page.get("Items", []):
+                    if (it.get("business_slug", "") or "").strip().lower() == slug_norm:
+                        found = it
+                        break
+                if found or "LastEvaluatedKey" not in page:
+                    break
+                scan_kwargs["ExclusiveStartKey"] = page["LastEvaluatedKey"]
+            items = [found] if found else []
+
         if not items:
             return _resp(404, {"message": "Catálogo no encontrado"})
         item = items[0]

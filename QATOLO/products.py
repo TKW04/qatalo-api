@@ -120,6 +120,9 @@ def get_products_by_user_id(user_id: str):
                     ),
                     "variants": item.get("variants", []) or [],
                     "variant_type": item.get("variant_type", "clothing"),
+                    "alt_prices": item.get("alt_prices", []) or [],
+                    "delivery_days_after_payment": int(item.get("delivery_days_after_payment", 0) or 0),
+                    "customization_fields": item.get("customization_fields", []) or [],
                     "featured": bool(item.get("featured", False) if item.get("featured", False) in [True, "true", "True", 1, "1"] else False),
                     "locality_config": item.get("locality_config", []) or [],
                     "low_stock_threshold": item.get(
@@ -224,6 +227,9 @@ def get_products_by_business_id(business_id: str):
                     ),
                     "variants": item.get("variants", []) or [],
                     "variant_type": item.get("variant_type", "clothing"),
+                    "alt_prices": item.get("alt_prices", []) or [],
+                    "delivery_days_after_payment": int(item.get("delivery_days_after_payment", 0) or 0),
+                    "customization_fields": item.get("customization_fields", []) or [],
                     "featured": bool(item.get("featured", False) if item.get("featured", False) in [True, "true", "True", 1, "1"] else False),
                     "locality_config": item.get("locality_config", []) or [],
                     "allow_comment": bool(
@@ -295,6 +301,9 @@ def create_product(event, user_name, user_id):
                 "is_customizable": bool(data.get("is_customizable", False)),  # ← nuevo
                 "variants": data.get("variants", []) or [],
                 "variant_type": data.get("variant_type", "clothing"),
+                "alt_prices": data.get("alt_prices", []) or [],
+                "delivery_days_after_payment": int(data.get("delivery_days_after_payment", 0) or 0),
+                "customization_fields": data.get("customization_fields", []) or [],
                 "featured": bool(data.get("featured", False)),
                 "locality_config": data.get("locality_config", []) or [],  # ← nuevo
                 "low_stock_threshold": (
@@ -332,6 +341,7 @@ def update_product(event, user_name, product_id, user_id):
                 "required_delivery_day=:rdd, delivery_start_day=:dsd, currency=:c, "
                 "imagesUrl=:img, category_id=:cat, is_available=:av, localities=:loc, "
                 "is_customizable=:ic, #var=:var, variant_type=:vt, featured=:ft, locality_config=:lc, "
+                "alt_prices=:ap, delivery_days_after_payment=:ddap, customization_fields=:cf, "
                 "user_id=:uid, update_date=:ud, update_user=:uu, low_stock_threshold=:lst, "
                 "itbis_mode=:itm, allow_comment=:ac, comment_required=:cr, comment_label=:cl"
             ),
@@ -359,6 +369,9 @@ def update_product(event, user_name, product_id, user_id):
                 ":ic": bool(data.get("is_customizable", False)),  # ← nuevo
                 ":var": data.get("variants", []) or [],  # ← nuevo
                 ":vt": data.get("variant_type", "clothing"),
+                ":ap": data.get("alt_prices", []) or [],
+                ":ddap": int(data.get("delivery_days_after_payment", 0) or 0),
+                ":cf": data.get("customization_fields", []) or [],
                 ":ft": bool(data.get("featured", False)),
                 ":lc": data.get("locality_config", []) or [],
                 ":uid": user_id,

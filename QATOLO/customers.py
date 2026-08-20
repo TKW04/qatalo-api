@@ -757,6 +757,8 @@ def create_customer_transaction(body):
             "payment_method": payment_method,
             "delivery_day": transaction.get("delivery_day", ""),
             "locality": transaction.get("locality", ""),
+            "customization": transaction.get("customization", []) or [],
+            "delivery_days_after_payment": int(transaction.get("delivery_days_after_payment", 0) or 0),
             "create_date": _now(),
             "create_user": body.get("email", ""),
         }
@@ -862,6 +864,8 @@ def create_customer_cart(event):
                 "variant": it.get("variant", {}),  # ← AGREGAR
                 "variant_label": it.get("variant_label", ""),  # ← AGREGAR
                 "comment": it.get("comment", ""),  # ← personalización del cliente
+                "customization": it.get("customization", []) or [],  # ← campos de personalización (medida/color)
+                "delivery_days_after_payment": int(it.get("delivery_days_after_payment", 0) or 0),
                 "offer_id": offer_id,
                 "offer_name": offer_name,
                 "offer_code": offer_code,
@@ -1151,6 +1155,13 @@ def approve_transaction(event, user_id=None):
         for m in members:
             if m.get("status") != "Aprobada":
                 m["status"] = "Aprobada"
+                # Entrega en X días tras el pago: se calcula justo ahora que se confirma,
+                # y solo si el producto/transacción no ya tiene una fecha fija asignada.
+                days_after = int(m.get("delivery_days_after_payment", 0) or 0)
+                if days_after > 0 and not m.get("delivery_day"):
+                    m["delivery_day"] = (
+                        datetime.now() + timedelta(days=days_after)
+                    ).strftime("%Y-%m-%d")
                 _adjust_stock(
                     m.get("product_id", ""),
                     -int(m.get("quantity", 1) or 1),
@@ -1875,6 +1886,8 @@ def add_transaction_by_token(event):
                 str(transaction.get("original_price", transaction.get("price", 0)) or 0)
             ),
             "discount_amount": Decimal(str(transaction.get("discount_amount", 0) or 0)),
+            "customization": transaction.get("customization", []) or [],
+            "delivery_days_after_payment": int(transaction.get("delivery_days_after_payment", 0) or 0),
             "create_date": _now(),
             "create_user": customer.get("email", ""),
         }
@@ -1978,6 +1991,8 @@ def checkout_cart_by_token(event):
                 "variant": it.get("variant", {}),  # ← AGREGAR
                 "variant_label": it.get("variant_label", ""),  # ← AGREGAR
                 "comment": it.get("comment", ""),  # ← personalización del cliente
+                "customization": it.get("customization", []) or [],  # ← campos de personalización (medida/color)
+                "delivery_days_after_payment": int(it.get("delivery_days_after_payment", 0) or 0),
                 "offer_id": offer_id,
                 "offer_name": offer_name,
                 "offer_code": offer_code,
