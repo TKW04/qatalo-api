@@ -1,3 +1,4 @@
+from decimal import Decimal
 import os
 import json
 import time
@@ -52,7 +53,7 @@ _jwks_cache = None
 def _resp(status, body=None):
     out = {"statusCode": status, "headers": CORS}
     if body is not None:
-        out["body"] = json.dumps(body, default=str)
+        out["body"] = json.dumps(body, default=_decimal_default)
     return out
 
 
@@ -72,6 +73,12 @@ def _token_from_event(event):
     if raw.lower().startswith("bearer "):
         raw = raw[7:]
     return raw.strip()
+
+def _decimal_default(obj):
+    if isinstance(obj, Decimal):
+        # entero si no tiene parte decimal, si no float
+        return int(obj) if obj % 1 == 0 else float(obj)
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
 
 # ----------------- Verificación de firma RS256 (sin librerías) -----------------
@@ -194,11 +201,11 @@ def _cognito_profile(user_id):
         }
     except Exception as e:
         print(json.dumps({"event": "_cognito_profile.attrs", "user_id": user_id, "Error": str(e)}))
-    try:
-        g = cognito.admin_list_groups_for_user(UserPoolId=USER_POOL_ID, Username=user_id)
-        out["groups"] = [grp.get("GroupName", "") for grp in g.get("Groups", [])]
-    except Exception as e:
-        print(json.dumps({"event": "_cognito_profile.groups", "user_id": user_id, "Error": str(e)}))
+    # try:
+    #     g = cognito.admin_list_groups_for_user(UserPoolId=USER_POOL_ID, Username=user_id)
+    #     out["groups"] = [grp.get("GroupName", "") for grp in g.get("Groups", [])]
+    # except Exception as e:
+    #     print(json.dumps({"event": "_cognito_profile.groups", "user_id": user_id, "Error": str(e)}))
     return out
 
 
@@ -260,12 +267,11 @@ def get_businesses():
     """
     try:
         businesses = business_table.scan().get("Items", [])
+        businesses.sort(key=lambda x: (x.get("business_id") or ""))
         result = []
-
         for b in businesses:
             bid = b.get("business_id", "")
             user_id = b.get("user_id", "")
-
             # Conteo de productos (COUNT no transfiere datos)
             try:
                 products_count = products_table.scan(
@@ -275,26 +281,35 @@ def get_businesses():
                 products_count = None
 
             # Clientes y órdenes (order_groups distintos) del negocio
-            customers_count, orders_count = 0, 0
+            customers_count = 0
+            orders_count = 0
+
             try:
-                custs = customers_table.scan(
-                    FilterExpression=Attr("business_id").eq(bid)
-                ).get("Items", [])
-                customers_count = len(custs)
-                groups = set()
-                for c in custs:
-                    for t in c.get("transactions", []) or []:
-                        groups.add(t.get("order_group") or t.get("transaction_id"))
-                orders_count = len(groups)
-            except Exception as e:
-                print(json.dumps({"event": "get_businesses.orders", "Error": str(e)}))
+                # print(json.dumps({ "business_id": bid, "business_name": b.get("business_name", ""), "user_id": user_id},default=_decimal_default))
+                if user_id == "aaa":
+                    pass
+                else:
+                    items = customers_table.scan(
+                        FilterExpression=Attr("business_id").eq(bid)
+                    )
+                    if "Items" in items:
+                        customers_count = len(items["Items"])
+                        groups = set()
+                        for c in items["Items"]:
+                            for t in c.get("transactions", []) or []:
+                                groups.add(t.get("order_group") or t.get("transaction_id"))
+                        orders_count = len(groups)
+                    else:
+                        customers_count = 0
+            except Exception as ec:
+                customers_count = 0
+                print(json.dumps({"event": "get_businesses.orders", "Error": str(ec)},default=_decimal_default))
 
             profile = _cognito_profile(user_id)
-
             result.append(
                 {
                     "business_id": bid,
-                    "business_name": b.get("business_name", "") or b.get("name", ""),
+                    "business_name": b.get("business_name", ""),
                     "slug": b.get("business_slug", "") or b.get("slug", ""),
                     "phone": b.get("business_phone", "") or b.get("phone", ""),
                     "user_id": user_id,
@@ -311,7 +326,6 @@ def get_businesses():
                     "create_date": b.get("create_date", ""),
                 }
             )
-
         result.sort(key=lambda x: (x.get("create_date") or ""), reverse=True)
         return _resp(200, result)
     except Exception as e:
