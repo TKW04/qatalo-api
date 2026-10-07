@@ -34,12 +34,17 @@ from SendMails.mails import (
 
 from invoice_generator import build_invoice_pdf, calc_invoice_totals
 
-try:
-    from offers import increment_offer_uses
-except ImportError:
+from offers import reserve_offer_use, release_offer_use
 
-    def increment_offer_uses(x):
-        pass
+
+from offers import _map as _map_offer
+from offer_pricing import (
+    catalog_unit_price,
+    offer_is_current,
+    code_matches,
+    price_lines,
+    differs,
+)
 
 
 dynamodb = boto3.resource("dynamodb", region_name=os.getenv("AWS_REGION"))
@@ -51,6 +56,7 @@ customers_table = dynamodb.Table("qatalo.customers")
 business_table = dynamodb.Table("qatalo.business")
 payment_methods_table = dynamodb.Table("qatalo.payment_methods")
 products_table = dynamodb.Table("qatalo.products")
+offers_table = dynamodb.Table("qatalo.offers")
 
 USER_POOL_ID = os.environ.get("USER_POOL_ID")
 s3 = boto3.client("s3")
@@ -241,6 +247,134 @@ def _check_stock_alerts(product, old_qty, new_qty):
 
     except Exception as e:
         print(json.dumps({"event": "_check_stock_alerts", "Error": str(e)}))
+
+
+# ----------------- Ofertas: validación y precios en el servidor -----------------
+def _log_offer(event_name, kind, **data):
+    print(json.dumps({"event": event_name, "level": "WARNING", "kind": kind, **data}, default=str))
+
+
+def _find_offer_by_code(business_id, code):
+    kwargs = {"FilterExpression": Attr("business_id").eq(business_id) & Attr("code").eq(code)}
+    while True:
+        page = offers_table.scan(**kwargs)
+        if page.get("Items"):
+            return page["Items"][0]
+        if "LastEvaluatedKey" not in page:
+            return None
+        kwargs["ExclusiveStartKey"] = page["LastEvaluatedKey"]
+
+
+def _resolve_offer(business_id, offer_id, offer_code, require_code=True):
+    """Carga la oferta (por id o, si no hay id, por código) y verifica que esté vigente
+    para el negocio. Devuelve (oferta_mapeada, None) o (None, motivo)."""
+    offer_code = (offer_code or "").strip().upper()
+    if offer_id:
+        raw = offers_table.get_item(Key={"offer_id": offer_id}).get("Item")
+    elif offer_code:
+        raw = _find_offer_by_code(business_id, offer_code)
+    else:
+        return None, "sin_oferta"
+    reason = offer_is_current(raw, business_id, datetime.now().strftime("%Y-%m-%d"))
+    if not reason and require_code and not code_matches(raw, offer_code):
+        reason = "codigo_incorrecto"
+    if reason:
+        return None, reason
+    return _map_offer(raw), None
+
+
+def _product_cached(cache, product_id):
+    if product_id not in cache:
+        cache[product_id] = (
+            products_table.get_item(Key={"product_id": product_id}).get("Item")
+            if product_id
+            else None
+        )
+    return cache[product_id]
+
+
+def _server_price_cart(items, business_id, offer_id, offer_code, event_name):
+    """Recalcula precios (desde la tabla de productos) y el descuento (motor de Python).
+    Ignora price/original_price/discount_amount del cliente; si difieren, loguea.
+    Si algún precio no se puede verificar, esa línea conserva el precio del cliente
+    y la orden se crea SIN descuento. Si la oferta no es válida → sin descuento.
+    Devuelve (lines, offer|None) con lines alineadas a items."""
+    cache = {}
+    engine_items = []
+    verified = True
+    for idx, it in enumerate(items):
+        pid = it.get("product_id", "")
+        product = _product_cached(cache, pid)
+        client_base = Decimal(str(it.get("original_price", it.get("price", 0)) or 0))
+        price, reason = catalog_unit_price(product, it)
+        if price is not None and (product or {}).get("business_id") not in (None, "", business_id):
+            price, reason = None, "producto_de_otro_negocio"
+        if price is None:
+            verified = False
+            price = client_base
+            _log_offer(event_name, "precio_no_verificable", line=idx, product_id=pid,
+                       reason=reason, client_price=client_base)
+        elif differs(price, client_base):
+            _log_offer(event_name, "precio_cliente_distinto", line=idx, product_id=pid,
+                       client_price=client_base, server_price=price)
+        engine_items.append({
+            "product_id": pid,
+            "category_id": (product or {}).get("category_id", "") or "",
+            "price": price,
+            "quantity": it.get("quantity", 1),
+        })
+
+    offer = None
+    if offer_id or offer_code:
+        if not verified:
+            _log_offer(event_name, "oferta_omitida_precio_no_verificable", offer_id=offer_id, offer_code=offer_code)
+        else:
+            offer, reason = _resolve_offer(business_id, offer_id, offer_code)
+            if reason:
+                _log_offer(event_name, "oferta_invalida", offer_id=offer_id, offer_code=offer_code, reason=reason)
+
+    lines, total = price_lines(engine_items, offer)
+    if offer and total <= 0:
+        _log_offer(event_name, "oferta_no_aplica", offer_id=offer.get("offer_id"))
+        offer = None
+
+    client_total = sum(
+        (Decimal(str(it.get("discount_amount", 0) or 0)) for it in items), Decimal("0")
+    )
+    if differs(client_total, total):
+        _log_offer(event_name, "descuento_cliente_distinto", offer_id=offer_id,
+                   client_discount=client_total, server_discount=total)
+    return lines, offer
+
+
+def _reserve_offer_or_strip(txs, offer_id, event_name):
+    """Reserva atómicamente un uso de la oferta ANTES de escribir la orden.
+    Si no hay usos disponibles (max_uses alcanzado por otra orden concurrente) o falla
+    la reserva, quita el descuento de `txs` (in place) y la orden se crea sin oferta.
+    Devuelve el offer_id reservado ("" si no se reservó) para liberarlo si la
+    escritura de la orden falla."""
+    if not offer_id:
+        return ""
+    if reserve_offer_use(offer_id):
+        return offer_id
+    _log_offer(event_name, "oferta_sin_usos_al_reservar", offer_id=offer_id)
+    for t in txs:
+        t["price"] = t.get("original_price", t.get("price"))
+        t["discount_amount"] = Decimal("0")
+        t["offer_id"] = ""
+        t["offer_name"] = ""
+        t["offer_code"] = ""
+    return ""
+
+
+def _offer_meta(offer):
+    if not offer:
+        return {"offer_id": "", "offer_name": "", "offer_code": ""}
+    return {
+        "offer_id": offer.get("offer_id", ""),
+        "offer_name": offer.get("name", ""),
+        "offer_code": (offer.get("code", "") or "").upper(),
+    }
 
 
 def _validate_cart_stock(items):
@@ -840,6 +974,12 @@ def create_customer_cart(event):
             Key={"payment_method_id": pm.get("payment_method_id", "")}
         ).get("Item", {})
 
+        # Precios y descuento calculados por el servidor (ignora los del cliente)
+        lines, offer = _server_price_cart(
+            items, business_id, offer_id, offer_code, "create_customer_cart.offer"
+        )
+        meta = _offer_meta(offer)
+
         order_group = str(uuid.uuid4())
         now = _now()
         new_txs = [
@@ -849,7 +989,7 @@ def create_customer_cart(event):
                 "product_id": it.get("product_id", ""),
                 "product_name": it.get("product_name", ""),
                 "quantity": it.get("quantity", 1),
-                "price": Decimal(str(it.get("price", 0) or 0)),
+                "price": lines[i]["price"],
                 "currency": it.get("currency", ""),  # ← moneda elegida por el cliente en el producto
                 "status": "Pendiente de pago",
                 "accept_terms": it.get("accept_terms", True),
@@ -868,58 +1008,60 @@ def create_customer_cart(event):
                 "comment": it.get("comment", ""),  # ← personalización del cliente
                 "customization": it.get("customization", []) or [],  # ← campos de personalización (medida/color)
                 "delivery_days_after_payment": int(it.get("delivery_days_after_payment", 0) or 0),
-                "offer_id": offer_id,
-                "offer_name": offer_name,
-                "offer_code": offer_code,
-                "original_price": Decimal(
-                    str(it.get("original_price", it.get("price", 0)) or 0)
-                ),
-                "discount_amount": Decimal(str(it.get("discount_amount", 0) or 0)),
+                **meta,
+                "original_price": lines[i]["original_price"],
+                "discount_amount": lines[i]["discount_amount"],
                 "create_date": now,
                 "create_user": email,
             }
-            for it in items
+            for i, it in enumerate(items)
         ]
 
         existing = _find_customer_by_email(business_id, email)
         ok, err = _validate_cart_stock(new_txs)
         if not ok:
             return err
-        if existing:
-            customer_id = existing["customer_id"]
-            transactions = existing.get("transactions", []) + new_txs
-            customers_table.update_item(
-                Key={"customer_id": customer_id},
-                UpdateExpression="SET given_name=:g, family_name=:f, email=:e, phone=:p, age=:a, transactions=:t, update_date=:ud, update_user=:uu",
-                ExpressionAttributeValues={
-                    ":g": body.get("given_name", ""),
-                    ":f": body.get("family_name", ""),
-                    ":e": email,
-                    ":p": body.get("phone", ""),
-                    ":a": int(body.get("age", 0) or 0),
-                    ":t": transactions,
-                    ":ud": now,
-                    ":uu": email,
-                },
-            )
-        else:
-            customer_id = str(uuid.uuid4())
-            customers_table.put_item(
-                Item={
-                    "customer_id": customer_id,
-                    "business_id": business_id,
-                    "given_name": body.get("given_name", ""),
-                    "family_name": body.get("family_name", ""),
-                    "email": email,
-                    "phone": body.get("phone", ""),
-                    "age": int(body.get("age", 0) or 0),
-                    "transactions": new_txs,
-                    "create_date": now,
-                    "create_user": email,
-                    "update_date": now,
-                    "update_user": email,
-                }
-            )
+        reserved = _reserve_offer_or_strip(new_txs, meta["offer_id"], "create_customer_cart.offer")
+        try:
+            if existing:
+                customer_id = existing["customer_id"]
+                transactions = existing.get("transactions", []) + new_txs
+                customers_table.update_item(
+                    Key={"customer_id": customer_id},
+                    UpdateExpression="SET given_name=:g, family_name=:f, email=:e, phone=:p, age=:a, transactions=:t, update_date=:ud, update_user=:uu",
+                    ExpressionAttributeValues={
+                        ":g": body.get("given_name", ""),
+                        ":f": body.get("family_name", ""),
+                        ":e": email,
+                        ":p": body.get("phone", ""),
+                        ":a": int(body.get("age", 0) or 0),
+                        ":t": transactions,
+                        ":ud": now,
+                        ":uu": email,
+                    },
+                )
+            else:
+                customer_id = str(uuid.uuid4())
+                customers_table.put_item(
+                    Item={
+                        "customer_id": customer_id,
+                        "business_id": business_id,
+                        "given_name": body.get("given_name", ""),
+                        "family_name": body.get("family_name", ""),
+                        "email": email,
+                        "phone": body.get("phone", ""),
+                        "age": int(body.get("age", 0) or 0),
+                        "transactions": new_txs,
+                        "create_date": now,
+                        "create_user": email,
+                        "update_date": now,
+                        "update_user": email,
+                    }
+                )
+        except Exception:
+            # La orden no se guardó: devolver el uso reservado
+            release_offer_use(reserved)
+            raise
 
         try:
             business = _get_business(business_id) or {}
@@ -1542,6 +1684,8 @@ def apply_offer_to_order(event, user_id=None):
         offer_id, offer_name, offer_code,
         items: [{ transaction_id, price, original_price, discount_amount }]
     }
+    El servidor valida la oferta (negocio, activa, fechas, max_uses) y recalcula
+    el reparto con offer_engine; `items` del cliente solo se usa para loguear diferencias.
     """
     try:
         body = json.loads(event.get("body", "{}"))
@@ -1566,30 +1710,65 @@ def apply_offer_to_order(event, user_id=None):
             )
 
         offer_id = body.get("offer_id", "") or ""
-        offer_name = body.get("offer_name", "") or ""
         offer_code = (body.get("offer_code", "") or "").upper()
 
-        # Mapa de valores por transaction_id enviados por el frontend
+        # Valores enviados por el frontend: solo para comparar/loguear (no se confía en ellos)
         items_map = {
             it.get("transaction_id", ""): it
             for it in (body.get("items", []) or [])
         }
 
         members = _group_members(transactions, tx)
+        business_id = customer.get("business_id", "")
+
+        # Precio base de cada línea = precio con el que se creó la orden
+        # (original_price si tuvo descuento; si no, price). Categoría desde productos.
+        cache = {}
+        engine_items = []
         for m in members:
+            orig = Decimal(str(m.get("original_price", 0) or 0))
+            base = orig if orig > 0 else Decimal(str(m.get("price", 0) or 0))
+            product = _product_cached(cache, m.get("product_id", ""))
+            engine_items.append({
+                "product_id": m.get("product_id", ""),
+                "category_id": (product or {}).get("category_id", "") or "",
+                "price": base,
+                "quantity": m.get("quantity", 1),
+            })
+
+        offer = None
+        if offer_id or offer_code:
+            # El admin elige la oferta por id; el código no es obligatorio aquí.
+            offer, reason = _resolve_offer(business_id, offer_id, offer_code, require_code=False)
+            if reason:
+                _log_offer("apply_offer_to_order.offer", "oferta_invalida",
+                           offer_id=offer_id, offer_code=offer_code, reason=reason)
+                return _resp(400, {"message": "La oferta no es válida o no está vigente"})
+        lines, total = price_lines(engine_items, offer)
+        if offer and total <= 0:
+            _log_offer("apply_offer_to_order.offer", "oferta_no_aplica", offer_id=offer_id)
+            return _resp(400, {"message": "La oferta no aplica a esta orden"})
+        meta = _offer_meta(offer)
+        offer_id = meta["offer_id"]
+
+        for m, line in zip(members, lines):
             vals = items_map.get(m.get("transaction_id", ""))
-            if vals is not None:
-                m["price"] = Decimal(str(vals.get("price", m.get("price", 0)) or 0))
-                m["original_price"] = Decimal(
-                    str(vals.get("original_price", m.get("original_price", 0)) or 0)
-                )
-                m["discount_amount"] = Decimal(
-                    str(vals.get("discount_amount", 0) or 0)
-                )
+            if vals is not None and (
+                differs(vals.get("discount_amount", 0), line["discount_amount"])
+                or differs(vals.get("price", 0), line["price"])
+            ):
+                _log_offer("apply_offer_to_order.offer", "valores_cliente_distintos",
+                           transaction_id=m.get("transaction_id", ""),
+                           client_price=vals.get("price"), server_price=line["price"],
+                           client_discount=vals.get("discount_amount"),
+                           server_discount=line["discount_amount"])
+            m["price"] = line["price"]
+            m["original_price"] = line["original_price"]
+            m["discount_amount"] = line["discount_amount"]
             # Metadata de la oferta en todas las transacciones del grupo
-            m["offer_id"] = offer_id
-            m["offer_name"] = offer_name
-            m["offer_code"] = offer_code
+            m["offer_id"] = meta["offer_id"]
+            m["offer_name"] = meta["offer_name"]
+            m["offer_code"] = meta["offer_code"]
 
         _save_transactions(
             customer["customer_id"], transactions, customer.get("email", "")
@@ -1863,13 +2042,25 @@ def add_transaction_by_token(event):
             Key={"payment_method_id": pm.get("payment_method_id", "")}
         ).get("Item", {})
 
+        # Precio y descuento calculados por el servidor (ignora los del cliente),
+        # con las mismas reglas que los checkouts de carrito.
+        lines, offer = _server_price_cart(
+            [transaction],
+            customer.get("business_id", ""),
+            transaction.get("offer_id", "") or "",
+            (transaction.get("offer_code", "") or "").upper(),
+            "add_transaction_by_token.offer",
+        )
+        line = lines[0]
+        meta = _offer_meta(offer)
+
         transactions = customer.get("transactions", [])
         tx = {
             "transaction_id": str(uuid.uuid4()),
             "product_id": transaction.get("product_id", ""),
             "product_name": transaction.get("product_name", ""),
             "quantity": transaction.get("quantity", 1),
-            "price": Decimal(str(transaction.get("price", 0) or 0)),
+            "price": line["price"],
             "currency": transaction.get("currency", ""),  # ← moneda elegida por el cliente en el producto
             "status": "Pendiente de pago",
             "accept_terms": transaction.get("accept_terms", True),
@@ -1883,27 +2074,24 @@ def add_transaction_by_token(event):
                 if transaction.get("fulfillment_type") == "delivery"
                 else ""
             ),
-            "offer_id": transaction.get("offer_id", ""),
-            "offer_name": transaction.get("offer_name", ""),
-            "offer_code": (transaction.get("offer_code", "") or "").upper(),
-            "original_price": Decimal(
-                str(transaction.get("original_price", transaction.get("price", 0)) or 0)
-            ),
-            "discount_amount": Decimal(str(transaction.get("discount_amount", 0) or 0)),
+            **meta,
+            "original_price": line["original_price"],
+            "discount_amount": line["discount_amount"],
             "customization": transaction.get("customization", []) or [],
             "delivery_days_after_payment": int(transaction.get("delivery_days_after_payment", 0) or 0),
             "create_date": _now(),
             "create_user": customer.get("email", ""),
         }
+        reserved = _reserve_offer_or_strip([tx], meta["offer_id"], "add_transaction_by_token.offer")
         transactions.append(tx)
-        _save_transactions(
-            customer["customer_id"], transactions, customer.get("email", "")
-        )
-        if tx.get("offer_id"):
-            try:
-                increment_offer_uses(tx["offer_id"])
-            except:
-                pass
+        try:
+            _save_transactions(
+                customer["customer_id"], transactions, customer.get("email", "")
+            )
+        except Exception:
+            # La orden no se guardó: devolver el uso reservado
+            release_offer_use(reserved)
+            raise
         try:
             owner_email = _owner_email(business)
             magic = _customer_magic_link(
@@ -1967,6 +2155,16 @@ def checkout_cart_by_token(event):
             Key={"payment_method_id": pm.get("payment_method_id", "")}
         ).get("Item", {})
 
+        # Precios y descuento calculados por el servidor (ignora los del cliente)
+        lines, offer = _server_price_cart(
+            items,
+            customer.get("business_id", ""),
+            offer_id,
+            offer_code,
+            "checkout_cart_by_token.offer",
+        )
+        meta = _offer_meta(offer)
+
         order_group = str(uuid.uuid4())
         now = _now()
         transactions = customer.get("transactions", [])
@@ -1977,7 +2175,7 @@ def checkout_cart_by_token(event):
                 "product_id": it.get("product_id", ""),
                 "product_name": it.get("product_name", ""),
                 "quantity": it.get("quantity", 1),
-                "price": Decimal(str(it.get("price", 0) or 0)),
+                "price": lines[i]["price"],
                 "currency": it.get("currency", ""),  # ← moneda elegida por el cliente en el producto
                 "status": "Pendiente de pago",
                 "accept_terms": it.get("accept_terms", True),
@@ -1998,25 +2196,25 @@ def checkout_cart_by_token(event):
                 "comment": it.get("comment", ""),  # ← personalización del cliente
                 "customization": it.get("customization", []) or [],  # ← campos de personalización (medida/color)
                 "delivery_days_after_payment": int(it.get("delivery_days_after_payment", 0) or 0),
-                "offer_id": offer_id,
-                "offer_name": offer_name,
-                "offer_code": offer_code,
-                "original_price": Decimal(
-                    str(it.get("original_price", it.get("price", 0)) or 0)
-                ),
-                "discount_amount": Decimal(str(it.get("discount_amount", 0) or 0)),
+                **meta,
+                "original_price": lines[i]["original_price"],
+                "discount_amount": lines[i]["discount_amount"],
             }
-            for it in items
+            for i, it in enumerate(items)
         ]
-        transactions.extend(new_txs)
         ok, err = _validate_cart_stock(new_txs)
         if not ok:
             return err
-        _save_transactions(
-            customer["customer_id"], transactions, customer.get("email", "")
-        )
-        if offer_id:
-            increment_offer_uses(offer_id)
+        reserved = _reserve_offer_or_strip(new_txs, meta["offer_id"], "checkout_cart_by_token.offer")
+        transactions.extend(new_txs)
+        try:
+            _save_transactions(
+                customer["customer_id"], transactions, customer.get("email", "")
+            )
+        except Exception:
+            # La orden no se guardó: devolver el uso reservado
+            release_offer_use(reserved)
+            raise
         try:
             owner_email = _owner_email(business)
             magic = _customer_magic_link(

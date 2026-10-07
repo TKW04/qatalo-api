@@ -78,6 +78,7 @@ def _needs_subscription(path, method):
         "/customers/orders",           # add/cancel/receipt/cart por token del cliente
         "/customers/access",           # OTP
         "/customers/transactions/cancel",  # cancelación pública (no cancelAdmin)
+        "/offers/public/",             # validate-code del catálogo (comprador, sin sesión)
     )
     for pub in public_customer_writes:
         if pub in path and "cancelAdmin" not in path:

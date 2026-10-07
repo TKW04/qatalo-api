@@ -1,0 +1,278 @@
+{
+  "version": 2,
+  "description": "Casos de paridad del motor de ofertas v2. Mismo archivo en qatalo-web y qatalo-api. Por caso: se elige la ganadora entre `offers` sobre `items` (pickWinningOffer) y se reparte por línea (distributeDiscount). `expected.lines` va alineado con `items` (mismo orden). Montos a 2 decimales; `price` es el precio unitario descontado y se compara con tolerancia 0.01.",
+  "cases": [
+    {
+      "name": "per_unit_200_x_5",
+      "description": "RD$200 menos por cada rollo: 5 rollos = RD$1,000. La línea no elegible no se toca.",
+      "offers": [
+        { "offer_id": "o1", "name": "200 por rollo", "trigger": "automatic", "discount_type": "fixed", "fixed_mode": "per_unit", "discount_value": 200, "applies_to": "products", "product_ids": ["rollo"], "priority": "media" }
+      ],
+      "items": [
+        { "line_id": "l1", "product_id": "rollo", "category_id": "c1", "price": 1500, "quantity": 5 },
+        { "line_id": "l2", "product_id": "cinta", "category_id": "c1", "price": 300, "quantity": 1 }
+      ],
+      "expected": {
+        "winner_offer_id": "o1",
+        "total_discount": 1000,
+        "lines": [
+          { "line_id": "l1", "discount_amount": 1000, "price": 1300 },
+          { "line_id": "l2", "discount_amount": 0, "price": 300 }
+        ]
+      }
+    },
+    {
+      "name": "per_unit_tope_por_linea",
+      "description": "per_unit 200 sobre una línea de 150 c/u: el descuento de la línea se topa en su subtotal (450), la otra línea recibe 200 x 2.",
+      "offers": [
+        { "offer_id": "o1", "name": "200 por unidad", "trigger": "automatic", "discount_type": "fixed", "fixed_mode": "per_unit", "discount_value": 200, "applies_to": "all", "priority": "media" }
+      ],
+      "items": [
+        { "line_id": "l1", "product_id": "p1", "category_id": "c1", "price": 150, "quantity": 3 },
+        { "line_id": "l2", "product_id": "p2", "category_id": "c1", "price": 500, "quantity": 2 }
+      ],
+      "expected": {
+        "winner_offer_id": "o1",
+        "total_discount": 850,
+        "lines": [
+          { "line_id": "l1", "discount_amount": 450, "price": 0 },
+          { "line_id": "l2", "discount_amount": 400, "price": 300 }
+        ]
+      }
+    },
+    {
+      "name": "order_min_quantity_4_no_aplica",
+      "description": "Compra 5 rollos y llévate RD$100 en el total: con 4 rollos no aplica.",
+      "offers": [
+        { "offer_id": "o1", "name": "5 rollos = 100 off", "trigger": "automatic", "discount_type": "fixed", "fixed_mode": "order", "discount_value": 100, "applies_to": "products", "product_ids": ["rollo"], "min_quantity": 5, "priority": "media" }
+      ],
+      "items": [
+        { "line_id": "l1", "product_id": "rollo", "category_id": "c1", "price": 1000, "quantity": 4 },
+        { "line_id": "l2", "product_id": "cinta", "category_id": "c1", "price": 300, "quantity": 3 }
+      ],
+      "expected": {
+        "winner_offer_id": null,
+        "total_discount": 0,
+        "lines": [
+          { "line_id": "l1", "discount_amount": 0, "price": 1000 },
+          { "line_id": "l2", "discount_amount": 0, "price": 300 }
+        ]
+      }
+    },
+    {
+      "name": "order_min_quantity_5_aplica",
+      "description": "Igual que el anterior con 5 rollos repartidos en dos variantes (3 + 2): aplica RD$100 una vez, repartido proporcional 60/40.",
+      "offers": [
+        { "offer_id": "o1", "name": "5 rollos = 100 off", "trigger": "automatic", "discount_type": "fixed", "fixed_mode": "order", "discount_value": 100, "applies_to": "products", "product_ids": ["rollo"], "min_quantity": 5, "priority": "media" }
+      ],
+      "items": [
+        { "line_id": "l1", "product_id": "rollo", "variant_id": "blanco", "category_id": "c1", "price": 1000, "quantity": 3 },
+        { "line_id": "l2", "product_id": "rollo", "variant_id": "negro", "category_id": "c1", "price": 1000, "quantity": 2 },
+        { "line_id": "l3", "product_id": "cinta", "category_id": "c1", "price": 300, "quantity": 1 }
+      ],
+      "expected": {
+        "winner_offer_id": "o1",
+        "total_discount": 100,
+        "lines": [
+          { "line_id": "l1", "discount_amount": 60, "price": 980 },
+          { "line_id": "l2", "discount_amount": 40, "price": 980 },
+          { "line_id": "l3", "discount_amount": 0, "price": 300 }
+        ]
+      }
+    },
+    {
+      "name": "min_order_amount_solo_elegibles_no_aplica",
+      "description": "Mínimo RD$1,000 en productos de la oferta: A suma 800 (B no cuenta aunque el carrito sume 5,800).",
+      "offers": [
+        { "offer_id": "o1", "name": "10% en A", "trigger": "automatic", "discount_type": "percentage", "discount_value": 10, "applies_to": "products", "product_ids": ["A"], "min_order_amount": 1000, "priority": "media" }
+      ],
+      "items": [
+        { "line_id": "l1", "product_id": "A", "category_id": "c1", "price": 400, "quantity": 2 },
+        { "line_id": "l2", "product_id": "B", "category_id": "c1", "price": 5000, "quantity": 1 }
+      ],
+      "expected": {
+        "winner_offer_id": null,
+        "total_discount": 0,
+        "lines": [
+          { "line_id": "l1", "discount_amount": 0, "price": 400 },
+          { "line_id": "l2", "discount_amount": 0, "price": 5000 }
+        ]
+      }
+    },
+    {
+      "name": "min_order_amount_solo_elegibles_aplica",
+      "description": "Mínimo RD$1,000 en productos de la oferta: A suma 1,200, aplica 10% sobre A.",
+      "offers": [
+        { "offer_id": "o1", "name": "10% en A", "trigger": "automatic", "discount_type": "percentage", "discount_value": 10, "applies_to": "products", "product_ids": ["A"], "min_order_amount": 1000, "priority": "media" }
+      ],
+      "items": [
+        { "line_id": "l1", "product_id": "A", "category_id": "c1", "price": 400, "quantity": 3 },
+        { "line_id": "l2", "product_id": "B", "category_id": "c1", "price": 5000, "quantity": 1 }
+      ],
+      "expected": {
+        "winner_offer_id": "o1",
+        "total_discount": 120,
+        "lines": [
+          { "line_id": "l1", "discount_amount": 120, "price": 360 },
+          { "line_id": "l2", "discount_amount": 0, "price": 5000 }
+        ]
+      }
+    },
+    {
+      "name": "2x1_variantes_mismo_producto",
+      "description": "2x1 con variante roja (500) + azul (450) del mismo producto: 1 gratis, la más barata (azul).",
+      "offers": [
+        { "offer_id": "o1", "name": "2x1 camisas", "trigger": "automatic", "discount_type": "buy_x_get_y", "buy_quantity": 2, "paid_quantity": 1, "applies_to": "products", "product_ids": ["camisa"], "priority": "media" }
+      ],
+      "items": [
+        { "line_id": "l1", "product_id": "camisa", "variant_id": "roja", "category_id": "c1", "price": 500, "quantity": 1 },
+        { "line_id": "l2", "product_id": "camisa", "variant_id": "azul", "category_id": "c1", "price": 450, "quantity": 1 }
+      ],
+      "expected": {
+        "winner_offer_id": "o1",
+        "total_discount": 450,
+        "lines": [
+          { "line_id": "l1", "discount_amount": 0, "price": 500 },
+          { "line_id": "l2", "discount_amount": 450, "price": 0 }
+        ]
+      }
+    },
+    {
+      "name": "2x1_productos_distintos",
+      "description": "2x1 sobre todo el catálogo con dos productos distintos (1 unidad c/u): no se combinan, 0 gratis.",
+      "offers": [
+        { "offer_id": "o1", "name": "2x1 todo", "trigger": "automatic", "discount_type": "buy_x_get_y", "buy_quantity": 2, "paid_quantity": 1, "applies_to": "all", "priority": "media" }
+      ],
+      "items": [
+        { "line_id": "l1", "product_id": "p1", "category_id": "c1", "price": 500, "quantity": 1 },
+        { "line_id": "l2", "product_id": "p2", "category_id": "c1", "price": 450, "quantity": 1 }
+      ],
+      "expected": {
+        "winner_offer_id": null,
+        "total_discount": 0,
+        "lines": [
+          { "line_id": "l1", "discount_amount": 0, "price": 500 },
+          { "line_id": "l2", "discount_amount": 0, "price": 450 }
+        ]
+      }
+    },
+    {
+      "name": "3x2_variantes",
+      "description": "3x2 con 7 unidades del mismo producto (4 a 120 + 3 a 100): floor(7/3) x 1 = 2 gratis, de las más baratas (100).",
+      "offers": [
+        { "offer_id": "o1", "name": "3x2", "trigger": "automatic", "discount_type": "buy_x_get_y", "buy_quantity": 3, "paid_quantity": 2, "applies_to": "all", "priority": "media" }
+      ],
+      "items": [
+        { "line_id": "l1", "product_id": "p1", "variant_id": "grande", "category_id": "c1", "price": 120, "quantity": 4 },
+        { "line_id": "l2", "product_id": "p1", "variant_id": "chico", "category_id": "c1", "price": 100, "quantity": 3 }
+      ],
+      "expected": {
+        "winner_offer_id": "o1",
+        "total_discount": 200,
+        "lines": [
+          { "line_id": "l1", "discount_amount": 0, "price": 120 },
+          { "line_id": "l2", "discount_amount": 200, "price": 33.33 }
+        ]
+      }
+    },
+    {
+      "name": "prioridad_alta_gana",
+      "description": "Prioridad alta gana aunque descuente menos que una media.",
+      "offers": [
+        { "offer_id": "media50", "name": "50% media", "trigger": "automatic", "discount_type": "percentage", "discount_value": 50, "applies_to": "all", "priority": "media" },
+        { "offer_id": "alta5", "name": "5% alta", "trigger": "code", "code": "ALTA5", "discount_type": "percentage", "discount_value": 5, "applies_to": "all", "priority": "alta" }
+      ],
+      "items": [
+        { "line_id": "l1", "product_id": "p1", "category_id": "c1", "price": 1000, "quantity": 2 }
+      ],
+      "expected": {
+        "winner_offer_id": "alta5",
+        "total_discount": 100,
+        "lines": [
+          { "line_id": "l1", "discount_amount": 100, "price": 950 }
+        ]
+      }
+    },
+    {
+      "name": "empate_prioridad_mayor_descuento",
+      "description": "Misma prioridad (y una sin prioridad = media): gana el mayor descuento (fijo 300 > 10% de 2000).",
+      "offers": [
+        { "offer_id": "pct10", "name": "10%", "trigger": "automatic", "discount_type": "percentage", "discount_value": 10, "applies_to": "all", "priority": "media" },
+        { "offer_id": "fix300", "name": "300 off", "trigger": "code", "code": "MENOS300", "discount_type": "fixed", "discount_value": 300, "applies_to": "all" }
+      ],
+      "items": [
+        { "line_id": "l1", "product_id": "p1", "category_id": "c1", "price": 500, "quantity": 2 },
+        { "line_id": "l2", "product_id": "p2", "category_id": "c1", "price": 1000, "quantity": 1 }
+      ],
+      "expected": {
+        "winner_offer_id": "fix300",
+        "total_discount": 300,
+        "lines": [
+          { "line_id": "l1", "discount_amount": 150, "price": 425 },
+          { "line_id": "l2", "discount_amount": 150, "price": 850 }
+        ]
+      }
+    },
+    {
+      "name": "porcentaje_por_categoria",
+      "description": "15% solo en la categoría c1: elegibles 400 + 333 = 733 -> 109.95.",
+      "offers": [
+        { "offer_id": "o1", "name": "15% c1", "trigger": "automatic", "discount_type": "percentage", "discount_value": 15, "applies_to": "categories", "category_ids": ["c1"], "priority": "media" }
+      ],
+      "items": [
+        { "line_id": "l1", "product_id": "p1", "category_id": "c1", "price": 200, "quantity": 2 },
+        { "line_id": "l2", "product_id": "p2", "category_id": "c2", "price": 1000, "quantity": 1 },
+        { "line_id": "l3", "product_id": "p3", "category_id": "c1", "price": 333, "quantity": 1 }
+      ],
+      "expected": {
+        "winner_offer_id": "o1",
+        "total_discount": 109.95,
+        "lines": [
+          { "line_id": "l1", "discount_amount": 60, "price": 170 },
+          { "line_id": "l2", "discount_amount": 0, "price": 1000 },
+          { "line_id": "l3", "discount_amount": 49.95, "price": 283.05 }
+        ]
+      }
+    },
+    {
+      "name": "legacy_fijo_sin_campos_nuevos_residuo",
+      "description": "Oferta legacy (sin fixed_mode ni min_quantity) = fijo una vez al total. 100 entre 3 líneas iguales: 33.33 c/u y el residuo 0.01 va a la línea elegible de mayor subtotal (empate -> la primera).",
+      "offers": [
+        { "offer_id": "o1", "name": "100 off", "trigger": "automatic", "discount_type": "fixed", "discount_value": 100, "applies_to": "all", "min_order_amount": 0, "priority": "media" }
+      ],
+      "items": [
+        { "line_id": "l1", "product_id": "p1", "category_id": "c1", "price": 50, "quantity": 1 },
+        { "line_id": "l2", "product_id": "p2", "category_id": "c1", "price": 50, "quantity": 1 },
+        { "line_id": "l3", "product_id": "p3", "category_id": "c1", "price": 50, "quantity": 1 }
+      ],
+      "expected": {
+        "winner_offer_id": "o1",
+        "total_discount": 100,
+        "lines": [
+          { "line_id": "l1", "discount_amount": 33.34, "price": 16.66 },
+          { "line_id": "l2", "discount_amount": 33.33, "price": 16.67 },
+          { "line_id": "l3", "discount_amount": 33.33, "price": 16.67 }
+        ]
+      }
+    },
+    {
+      "name": "fijo_order_tope_subtotal_elegible",
+      "description": "Fijo 500 una vez al total sobre productos A: A solo suma 200, el descuento se topa en 200 (B no se toca).",
+      "offers": [
+        { "offer_id": "o1", "name": "500 off en A", "trigger": "automatic", "discount_type": "fixed", "fixed_mode": "order", "discount_value": 500, "applies_to": "products", "product_ids": ["A"], "priority": "media" }
+      ],
+      "items": [
+        { "line_id": "l1", "product_id": "A", "category_id": "c1", "price": 200, "quantity": 1 },
+        { "line_id": "l2", "product_id": "B", "category_id": "c1", "price": 900, "quantity": 1 }
+      ],
+      "expected": {
+        "winner_offer_id": "o1",
+        "total_discount": 200,
+        "lines": [
+          { "line_id": "l1", "discount_amount": 200, "price": 0 },
+          { "line_id": "l2", "discount_amount": 0, "price": 900 }
+        ]
+      }
+    }
+  ]
+}
