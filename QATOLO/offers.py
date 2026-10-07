@@ -1,6 +1,6 @@
 import boto3, json, os, uuid, re
 from decimal import Decimal
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from boto3.dynamodb.conditions import Attr
 from botocore.exceptions import ClientError
 
@@ -19,12 +19,17 @@ def _resp(s, b):
     return {"statusCode": s, "headers": CORS, "body": json.dumps(b, default=str)}
 
 
+# Hora local de RD (UTC-4 fijo), igual que customers.py: "hoy" para vigencia de ofertas
+# debe coincidir con el día local del negocio, no con el día UTC de la Lambda.
+RD_TZ = timezone(timedelta(hours=-4), "America/Santo_Domingo")
+
+
 def _now():
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return datetime.now(RD_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _today():
-    return datetime.now().strftime("%Y-%m-%d")
+    return datetime.now(RD_TZ).strftime("%Y-%m-%d")
 
 
 def _get_biz(user_id):

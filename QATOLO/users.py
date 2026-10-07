@@ -156,10 +156,12 @@ def register_user(event):
             Username=body.get('email')
         )
 
-        loginLink = f"{FRONT_END_URL}/login"
-        return welcome_email(body.get('email'),
-                             to_name=f"{body.get('given_name')} {body.get('family_name')}",
-                             loginLink=loginLink)
+        sent = send_welcome_email(body.get('email'), body.get('given_name'), body.get('family_name'))
+        return {
+            'statusCode': 200,
+            'headers': {'Access-Control-Allow-Origin': '*'},
+            'body': json.dumps({'message': 'Usuario creado', 'welcome_email_sent': sent})
+        }
 
     except Exception as e:
         print(json.dumps({"event": "create_user", "Error": str(e)}))
@@ -168,6 +170,33 @@ def register_user(event):
             'headers': {'Access-Control-Allow-Origin': '*'},
             'body': json.dumps({'message': str(e)})
         }
+
+
+def _welcome_enabled():
+    return os.environ.get('WELCOME_EMAIL_ENABLED', 'true').strip().lower() not in ('0', 'false', 'no', 'off')
+
+
+def plans_url():
+    """Página de planes de qatalo-web (/payment: tras iniciar sesión muestra los planes de Paddle)."""
+    return os.environ.get('PLANS_URL') or f"{FRONT_END_URL.rstrip('/')}/payment"
+
+
+def send_welcome_email(email, given_name, family_name):
+    """Correo de bienvenida (MailerSend). Nunca lanza: un fallo no debe romper el registro."""
+    if not _welcome_enabled() or not email:
+        return False
+    try:
+        name = " ".join(x for x in (given_name, family_name) if x) or email
+        res = welcome_email(email, to_name=name,
+                            loginLink=f"{FRONT_END_URL.rstrip('/')}/login",
+                            plans_link=plans_url())
+        ok = isinstance(res, dict) and res.get('statusCode') == 200
+        if not ok:
+            print(json.dumps({"event": "welcome_email.failed"}))
+        return ok
+    except Exception as e:
+        print(json.dumps({"event": "welcome_email.failed", "Error": type(e).__name__}))
+        return False
 
 
 def forgot_password(user_name):

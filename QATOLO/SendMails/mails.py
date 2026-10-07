@@ -63,21 +63,51 @@ def past_due_email(to_address, to_name, admin_url):
                 "body": json.dumps({"message": str(e)})}
 
 
-def welcome_email(to_address, to_name, loginLink):
+SUPPORT_EMAIL = "info@qatalo.online"
+OPT_OUT_MAILTO = (
+    "mailto:info@qatalo.online?subject=No%20deseo%20recibir%20correos%20informativos"
+)
+
+
+def welcome_email(to_address, to_name, loginLink, plans_link=None):
     try:
         mail = emails.NewEmail(MAIL_API_TOKEN)
         template = env.get_template("welcome.html")
         mail.send({
             "from": QATALO_FROM,
             "to": [{"email": to_address, "name": to_name}],
-            "subject": "¡Bienvenido a Qatalo!",
-            "html": template.render(login_link=loginLink, name=to_name)
+            "subject": "¡Bienvenido a Qatalo! Activa tu catálogo",
+            "html": template.render(
+                login_link=loginLink,
+                plans_link=plans_link or loginLink,
+                name=to_name,
+                support_email=SUPPORT_EMAIL,
+                opt_out_link=OPT_OUT_MAILTO,
+            ),
         })
         return {"statusCode": 200, "headers": {"Access-Control-Allow-Origin": "*"}}
     except Exception as e:
         print(json.dumps({"event": "welcome_email", "Error": str(e)}))
         return {"statusCode": 500, "headers": {"Access-Control-Allow-Origin": "*"},
                 "body": json.dumps({"message": str(e)})}
+
+
+def account_deleted_email(to_address, to_name):
+    """Confirmación de eliminación de cuenta (transaccional)."""
+    try:
+        mail = emails.NewEmail(MAIL_API_TOKEN)
+        template = env.get_template("account_deleted.html")
+        mail.send({
+            "from": QATALO_FROM,
+            "to": [{"email": to_address, "name": to_name}],
+            "subject": "Tu cuenta fue eliminada - Qatalo",
+            "html": template.render(name=to_name, support_email=SUPPORT_EMAIL),
+        })
+        return {"statusCode": 200, "headers": {"Access-Control-Allow-Origin": "*"}}
+    except Exception as e:
+        # Sin datos personales en el log (solo el tipo de error).
+        print(json.dumps({"event": "account_deleted_email", "Error": type(e).__name__}))
+        return {"statusCode": 500, "headers": {"Access-Control-Allow-Origin": "*"}}
 
 
 def contact_team_email(to_address, to_name, login_link, message):

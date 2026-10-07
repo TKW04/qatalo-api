@@ -83,8 +83,19 @@ def _resp(status, body=None):
     return out
 
 
+# Zona de negocio: República Dominicana (UTC-4 fijo, sin horario de verano).
+# Las fechas se guardan como hora LOCAL de RD sin offset ("YYYY-MM-DD HH:MM:SS"):
+# web y app las interpretan como hora local y SellReport toma el día con slice(0, 10).
+# Antes se usaba datetime.now() (UTC en Lambda): los registros previos quedan 4 h adelantados.
+RD_TZ = timezone(timedelta(hours=-4), "America/Santo_Domingo")
+
+
+def _rd_now():
+    return datetime.now(RD_TZ).replace(tzinfo=None)
+
+
 def _now():
-    return datetime.now().strftime(DATE_FMT)
+    return _rd_now().strftime(DATE_FMT)
 
 
 def _get_customer(customer_id):
@@ -275,7 +286,7 @@ def _resolve_offer(business_id, offer_id, offer_code, require_code=True):
         raw = _find_offer_by_code(business_id, offer_code)
     else:
         return None, "sin_oferta"
-    reason = offer_is_current(raw, business_id, datetime.now().strftime("%Y-%m-%d"))
+    reason = offer_is_current(raw, business_id, _rd_now().strftime("%Y-%m-%d"))
     if not reason and require_code and not code_matches(raw, offer_code):
         reason = "codigo_incorrecto"
     if reason:
@@ -1304,7 +1315,7 @@ def approve_transaction(event, user_id=None):
                 days_after = int(m.get("delivery_days_after_payment", 0) or 0)
                 if days_after > 0 and not m.get("delivery_day"):
                     m["delivery_day"] = (
-                        datetime.now() + timedelta(days=days_after)
+                        _rd_now() + timedelta(days=days_after)
                     ).strftime("%Y-%m-%d")
                 _adjust_stock(
                     m.get("product_id", ""),
@@ -2523,7 +2534,8 @@ def emit_invoice(event, user_name, user_id):
                 }
             )
 
-        itbis_rate = float(business.get("itbis_rate", 18) or 18)
+        _itr = business.get("itbis_rate")
+        itbis_rate = 18.0 if _itr is None or str(_itr).strip() == "" else float(_itr)  # 0 % es válido
         items_calc, totals = calc_invoice_totals(raw_items, itbis_rate, with_ncf)
 
         # 6) Metadata

@@ -17,6 +17,7 @@ from offers import offers_routes
 from delivery_reminder import run_delivery_reminders
 from suggestions import suggestions_routes
 from root import root_routes
+import account_deletion
 
 cognito = boto3.client("cognito-idp")
 USER_POOL_ID = os.environ.get("USER_POOL_ID")
@@ -95,8 +96,17 @@ def _needs_subscription(path, method):
 
 def lambda_handler(event, context):
     try:
+        # Continuación asíncrona del borrado de cuenta (la invoca la propia Lambda; un evento de
+        # API Gateway siempre trae requestContext, así que no se puede falsificar desde HTTP).
+        if event.get("source") == account_deletion.WORKER_SOURCE and "requestContext" not in event:
+            return account_deletion.handle_worker_event(event, context)
         if event.get("source") == "aws.events" or event.get("detail-type") == "Scheduled Event":
-            return run_delivery_reminders()
+            result = run_delivery_reminders()
+            try:
+                account_deletion.resume_pending(context)
+            except Exception as e:
+                print(json.dumps({"event": "account_deletion.sweep_failed", "Error": type(e).__name__}))
+            return result
         headers = event.get('headers', {})
         arn = context.invoked_function_arn
         alias = arn.split(":")[-1]
@@ -134,6 +144,10 @@ def lambda_handler(event, context):
                     "transaction_status": status,
                     "message": "Tu suscripción no está activa. Reactívala para continuar.",
                 })
+
+        # Eliminación de cuenta (App Store 5.1.1(v)). Antes del router genérico de "users".
+        if path == f"/{alias}/users/me" and method == "DELETE":
+            return account_deletion.handle_delete_request(event, context, alias)
 
         if "/root/" in path:
             return root_routes(path=path, method=method, event=event, alias=alias)

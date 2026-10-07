@@ -17,6 +17,17 @@ USER_POOL_ID = os.environ.get("USER_POOL_ID")
 CATALOG_HIDDEN_STATUSES = {"canceled", "paused"}
 
 
+def _num(value, default, cast=int):
+    """Convierte value a número respetando 0 (p. ej. umbral 0 = sin alertas, ITBIS 0 %).
+    Solo None / "" / valores no numéricos caen al default (antes `or default` convertía 0 en default)."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return default
+    try:
+        return cast(value)
+    except (TypeError, ValueError, ArithmeticError):
+        return default
+
+
 def _owner_sub_status(user_id):
     """Lee custom:transaction_status del dueño desde Cognito (fresco)."""
     if not user_id:
@@ -126,10 +137,10 @@ def get_business_by_user_id(user_id: str):
                 "localities": item.get("localities") or [],
                 "ga_tracking_id": item.get("ga_tracking_id", ""),
                 "meta_pixel_id": item.get("meta_pixel_id", ""),
-                "low_stock_threshold": int(item.get("low_stock_threshold", 5) or 5),
+                "low_stock_threshold": _num(item.get("low_stock_threshold"), 5),
                 "rnc": item.get("rnc", ""),
                 "ncf_enabled": bool(item.get("ncf_enabled", False)),
-                "itbis_rate": float(item.get("itbis_rate", 18) or 18),
+                "itbis_rate": _num(item.get("itbis_rate"), 18.0, float),
                 "ncf_pool": item.get("ncf_pool", []) or [],
                 "delivery_reminder_enabled": bool(
                     item.get("delivery_reminder_enabled", False)
@@ -183,6 +194,10 @@ def get_business_by_slug(slug: str):
             return _resp(404, {"message": "Catálogo no encontrado"})
         item = items[0]
 
+        # Cuenta en proceso de eliminación: el catálogo deja de existir al instante.
+        if item.get("account_deletion_pending"):
+            return _resp(404, {"message": "Catálogo no encontrado"})
+
         # Si el dueño no tiene suscripción vigente (cancelada/pausada), ocultar el catálogo.
         # Devolvemos solo la marca para mostrar una pantalla neutra de "no disponible".
         owner_status = _owner_sub_status(item.get("user_id", ""))
@@ -208,10 +223,10 @@ def get_business_by_slug(slug: str):
             "status": item.get("status"),
             "ga_tracking_id": item.get("ga_tracking_id", ""),
             "meta_pixel_id": item.get("meta_pixel_id", ""),
-            "low_stock_threshold": int(item.get("low_stock_threshold", 5) or 5),
+            "low_stock_threshold": _num(item.get("low_stock_threshold"), 5),
             "rnc": item.get("rnc", ""),
             "ncf_enabled": bool(item.get("ncf_enabled", False)),
-            "itbis_rate": float(item.get("itbis_rate", 18) or 18),
+            "itbis_rate": _num(item.get("itbis_rate"), 18.0, float),
             "ncf_pool": item.get("ncf_pool", []) or [],
             # Tipografía y logo (fallback = comportamiento actual)
             "fontHeading": item.get("font_heading", "default"),
@@ -256,13 +271,13 @@ def create_business(event, user_name, user_id):
             "meta_pixel_id": data.get("meta_pixel_id", ""),
             "create_date": datetime.now().isoformat(),
             "update_date": datetime.now().isoformat(),
-            "low_stock_threshold": int(data.get("low_stock_threshold", 5) or 5),
+            "low_stock_threshold": _num(data.get("low_stock_threshold"), 5),
             "delivery_reminder_enabled": bool(
                 data.get("delivery_reminder_enabled", False)
             ),
             "rnc": data.get("rnc", ""),
             "ncf_enabled": bool(data.get("ncf_enabled", False)),
-            "itbis_rate": Decimal(str(data.get("itbis_rate", 18) or 18)),
+            "itbis_rate": Decimal(str(_num(data.get("itbis_rate"), 18, float))),
             "ncf_pool": data.get("ncf_pool", []) or [],
             # Tipografía y logo
             "font_heading": data.get("fontHeading", "default"),
@@ -318,11 +333,11 @@ def update_business(event, user_id, business_id):
                 ":u": datetime.now().isoformat(),
                 ":ga": data.get("ga_tracking_id", ""),
                 ":mp": data.get("meta_pixel_id", ""),
-                ":lst": int(data.get("low_stock_threshold", 5) or 5),
+                ":lst": _num(data.get("low_stock_threshold"), 5),
                 ":dre": bool(data.get("delivery_reminder_enabled", False)),
                 ":rnc": data.get("rnc", ""),
                 ":nce": bool(data.get("ncf_enabled", False)),
-                ":itr": Decimal(str(data.get("itbis_rate", 18) or 18)),
+                ":itr": Decimal(str(_num(data.get("itbis_rate"), 18, float))),
                 ":ncp": data.get("ncf_pool", []) or [],
                 ":fh": data.get("font_heading", "default"),
                 ":fb": data.get("font_body", "default"),

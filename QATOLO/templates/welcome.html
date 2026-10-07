@@ -412,52 +412,61 @@
 
       <!-- Content -->
       <div class="content">
-        <div class="greeting">¡Hola {{name}} y bienvenido/a!</div>
+        <div class="greeting">¡Hola {{name}}, te damos la bienvenida!</div>
 
         <div class="welcome-message">
-          Estamos emocionados de tenerte como parte de la familia
-          <strong>Qatalo</strong>. Has tomado una excelente decisión al
-          unirte a nuestra plataforma SaaS diseñada para impulsar tu
-          productividad y llevar tu negocio al siguiente nivel.
+          Tu cuenta de <strong>Qatalo</strong> ya está creada. Para
+          <strong>activar tu catálogo</strong> solo falta un paso: elige el plan
+          que mejor se adapte a tu negocio.
         </div>
 
         <div class="cta-section">
-          <a href="{{login_link}}" class="cta-button">Comenzar ahora</a>
+          <a href="{{plans_link}}" class="cta-button">Elegir mi plan</a>
+        </div>
+
+        <div class="welcome-message" style="font-size: 0.95rem">
+          Inicia sesión con el correo y la contraseña con los que te registraste.
+          Si el botón no funciona, copia este enlace en tu navegador:<br />
+          <a href="{{plans_link}}" style="color: #34699a">{{plans_link}}</a>
         </div>
 
         <!-- Next Steps -->
         <div class="next-steps">
           <div class="next-steps-title">Tus próximos pasos</div>
           <ul class="steps-list">
-             <li class="step-item">
-              Selecciona el plan que mejor se adapte a tus necesidades
-            </li>
             <li class="step-item">
-              Completa tu perfil 
+              Elige tu plan en <a href="{{plans_link}}" style="color: #34699a">{{plans_link}}</a>
             </li>
-            <li class="step-item">
-              Crea tus categorías y productos
-            </li>
-            <li class="step-item">
-              Comparte tu catálogo con un código QR
-            </li>
+            <li class="step-item">Completa el perfil de tu negocio</li>
+            <li class="step-item">Crea tus categorías y productos</li>
+            <li class="step-item">Comparte tu catálogo con un código QR</li>
           </ul>
+        </div>
+
+        <div class="support-section">
+          <div class="support-title">¿Necesitas ayuda?</div>
+          <div class="support-text">
+            Escríbenos a
+            <a href="mailto:{{support_email}}" style="color: #34699a">{{support_email}}</a>
+            y te ayudamos a configurar tu catálogo.
+          </div>
         </div>
 
         <div style="margin-top: 30px; color: #34699a; text-align: center">
           <strong>¡Gracias por confiar en nosotros!</strong><br /><br />
-          Estamos aquí para hacer que tu experiencia sea increíble.<br />
           <strong>El equipo de Qatalo</strong>
         </div>
       </div>
 
       <!-- Footer -->
       <div class="footer">
-        <div class="footer-welcome">🎉 ¡Bienvenido a la comunidad Qatalo!</div>
-
         <div class="copyright">
-          © 2025 Qatalo. Todos los derechos reservados.<br />
-          Recibiste este correo porque te registraste en Qatalo
+          © Qatalo. Todos los derechos reservados.<br />
+          Recibiste este correo porque creaste una cuenta en Qatalo.<br />
+          Si no deseas recibir correos informativos de Qatalo,
+          <a href="{{opt_out_link}}" style="color: #fdf5aa">escríbenos aquí</a>
+          y te daremos de baja. Seguirás recibiendo los correos necesarios sobre
+          tu cuenta y tus pagos.
         </div>
       </div>
     </div>
