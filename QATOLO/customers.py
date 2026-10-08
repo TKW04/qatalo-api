@@ -17,7 +17,7 @@ import uuid
 from requests_toolbelt.multipart import decoder
 from boto3.dynamodb.conditions import Attr
 from datetime import datetime, timezone, timedelta
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
 from SendMails.mails import (
     new_order_create_email,
@@ -32,7 +32,7 @@ from SendMails.mails import (
     invoice_email,
 )
 
-from invoice_generator import build_invoice_pdf, calc_invoice_totals
+from invoice_generator import build_invoice_pdf, calc_invoice_totals, safe_filename_part
 
 from offers import reserve_offer_use, release_offer_use
 
@@ -1462,6 +1462,42 @@ def cancel_transaction(event, user_id=None):
         return _resp(500, {"message": str(e)})
 
 
+def _reconcile_manual_line_edit(tx, old_price, old_qty):
+    """Mantiene coherente el descuento de una línea tras una edición manual
+    (update_transaction). `tx` ya trae el price/quantity nuevos.
+
+    - Si el precio unitario cambió: la edición manual anula el descuento
+      automático de ESA línea → original_price = price nuevo,
+      discount_amount = 0 y se quitan offer_id/offer_name/offer_code.
+      Las demás líneas de la orden (si la oferta estaba repartida) conservan
+      su parte del descuento y su metadata de oferta: el descuento total de la
+      orden baja exactamente en lo que tenía esta línea.
+    - Si el precio no cambió: se conserva todo. Si solo cambió la cantidad y la
+      línea tenía descuento, discount_amount se re-escala a
+      (original_price - price) * cantidad para que la línea siga cuadrando
+      (mismo descuento unitario).
+    """
+    new_price = Decimal(str(tx.get("price", 0) or 0))
+    if new_price != Decimal(str(old_price or 0)):
+        tx["original_price"] = new_price
+        tx["discount_amount"] = Decimal("0")
+        tx["offer_id"] = ""
+        tx["offer_name"] = ""
+        tx["offer_code"] = ""
+        return
+    disc = Decimal(str(tx.get("discount_amount", 0) or 0))
+    orig = Decimal(str(tx.get("original_price", 0) or 0))
+    try:
+        qty_changed = Decimal(str(tx.get("quantity", 1) or 1)) != Decimal(str(old_qty or 1))
+    except Exception:
+        qty_changed = False
+    if qty_changed and disc > 0 and orig > new_price:
+        qty = Decimal(str(tx.get("quantity", 1) or 1))
+        tx["discount_amount"] = ((orig - new_price) * qty).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+
+
 def update_transaction(event, user_id=None):
     try:
         body = json.loads(event.get("body", "{}"))
@@ -1476,6 +1512,8 @@ def update_transaction(event, user_id=None):
         if not tx:
             return _resp(404, {"message": "Transacción no encontrada"})
         tx["delivery_day"] = body.get("delivery_day", tx.get("delivery_day", ""))
+        old_price = Decimal(str(tx.get("price", 0) or 0))
+        old_qty = tx.get("quantity", 1)
         tx["price"] = Decimal(str(body.get("price", tx.get("price", 0)) or 0))
         tx["quantity"] = body.get("quantity", tx.get("quantity", 1))
         tx["product_id"] = body.get("product_id", tx.get("product_id", ""))
@@ -1491,15 +1529,9 @@ def update_transaction(event, user_id=None):
         tx["delivery_address"] = body.get(
             "delivery_address", tx.get("delivery_address", "")
         )
-        tx["offer_id"] = body.get("offer_id", tx.get("offer_id", ""))
-        tx["offer_name"] = body.get("offer_name", tx.get("offer_name", ""))
-        tx["offer_code"] = body.get("offer_code", tx.get("offer_code", ""))
-        tx["original_price"] = Decimal(
-            str(body.get("original_price", tx.get("original_price", 0)) or 0)
-        )
-        tx["discount_amount"] = Decimal(
-            str(body.get("discount_amount", tx.get("discount_amount", 0)) or 0)
-        )
+        # Descuento de la línea: lo controla el servidor (apply_offer_to_order /
+        # checkout). Se ignoran original_price/discount_amount/offer_* del body.
+        _reconcile_manual_line_edit(tx, old_price, old_qty)
         _save_transactions(
             customer["customer_id"], transactions, customer.get("email", "")
         )
@@ -2531,6 +2563,8 @@ def emit_invoice(event, user_name, user_id):
                     "itbis_mode": product.get("itbis_mode", "included"),
                     "delivery_price": t.get("delivery_price", 0),
                     "discount_amount": t.get("discount_amount", 0),
+                    "original_price": t.get("original_price", 0),
+                    "offer_name": t.get("offer_name", ""),
                 }
             )
 
@@ -2566,7 +2600,9 @@ def emit_invoice(event, user_name, user_id):
         pdf_bytes = build_invoice_pdf(business, customer_data, items_calc, totals, meta)
 
         doc_label = "factura" if with_ncf else "recibo"
-        filename = f"invoices/{business_id}/{doc_label}_{meta['order_ref']}_{int(datetime.now().timestamp())}.pdf"
+        # Nombre de archivo / clave S3 solo ASCII (independiente de nombres con emoji/acentos)
+        file_ref = safe_filename_part(meta["order_ref"], fallback="orden")
+        filename = f"invoices/{business_id}/{doc_label}_{file_ref}_{int(datetime.now().timestamp())}.pdf"
 
         # 8) Subir a S3
         s3.put_object(
@@ -2607,7 +2643,7 @@ def emit_invoice(event, user_name, user_id):
             Params={
                 "Bucket": INVOICE_BUCKET,
                 "Key": filename,
-                "ResponseContentDisposition": f'attachment; filename="{doc_label}_{meta["order_ref"]}.pdf"',
+                "ResponseContentDisposition": f'attachment; filename="{doc_label}_{file_ref}.pdf"',
             },
             ExpiresIn=300,
         )
