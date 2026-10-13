@@ -33,15 +33,23 @@
       {% else %}
         <div class="logo-text">{{ business_name }}</div>
       {% endif %}
-      <div class="badge">{% if is_factura %}🧾 Factura{% else %}📄 Recibo de Pago{% endif %}</div>
+      <div class="badge">{% if is_factura %}🧾 Factura{% elif unpaid %}📄 Factura informal{% else %}📄 Recibo de Pago{% endif %}</div>
     </div>
 
     <div class="content">
+      {% if unpaid %}
+      <div class="greeting">Hola, {{ customer_name }}</div>
+      <p class="text">
+        Te enviamos el detalle de tu pedido, pendiente de pago. Adjunto encontrarás tu
+        <strong>{{ doc_title|lower }}</strong> de <strong>{{ business_name }}</strong>.
+      </p>
+      {% else %}
       <div class="greeting">¡Gracias por tu compra, {{ customer_name }}!</div>
       <p class="text">
         Adjunto a este correo encontrarás tu <strong>{{ doc_title|lower }}</strong> de la compra realizada en
         <strong>{{ business_name }}</strong>.
       </p>
+      {% endif %}
 
       <div class="ref-box">
         <div class="ref-label">Orden de referencia</div>
@@ -51,10 +59,11 @@
       <div class="attach-note">
         📎 Tu {{ doc_title|lower }} está adjunta en formato PDF.
         {% if is_factura %}Este documento tiene valor fiscal.{% endif %}
+        {% if unpaid %}Pendiente de pago.{% endif %}
       </div>
 
       <p class="text" style="margin-top:24px; font-size:.92rem;">
-        Si tienes alguna pregunta sobre tu compra, no dudes en contactar a {{ business_name }}.
+        Si tienes alguna pregunta sobre tu {% if unpaid %}pedido{% else %}compra{% endif %}, no dudes en contactar a {{ business_name }}.
       </p>
     </div>
 

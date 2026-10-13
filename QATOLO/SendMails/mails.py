@@ -449,14 +449,22 @@ def delivery_reminder_email(to_address, business_name, delivery_date, order_grou
             "traceback": traceback.format_exc()
         }))
 
-def invoice_email(to_address, customer_name, business, invoice_type, order_ref, pdf_bytes, doc_label):
+def invoice_email(to_address, customer_name, business, invoice_type, order_ref, pdf_bytes, doc_label, unpaid=False):
     try:        
         color_vars = build_email_color_vars(business)
         biz_name   = business.get("name", "")
         logo_url   = business.get("logo_url", "")
 
         is_factura = invoice_type == "factura"
-        doc_title  = "Factura" if is_factura else "Recibo de pago"
+        if is_factura:
+            doc_title = "Factura"
+        else:
+            doc_title = "Factura informal" if unpaid else "Recibo de pago"
+        # Orden aún no pagada → documento "por cobrar" (asunto/cuerpo de pedido)
+        if unpaid:
+            subject = f"{doc_title} de tu pedido en {biz_name} — #{order_ref}"
+        else:
+            subject = f"{doc_title} de tu compra en {biz_name} — #{order_ref}"
 
         mail = emails.NewEmail(MAIL_API_TOKEN)
         template = env.get_template("invoice_email.html")
@@ -473,13 +481,14 @@ def invoice_email(to_address, customer_name, business, invoice_type, order_ref, 
         response = mail.send({
         "from": _biz_from(business),   # ← ya devuelve {"email": ..., "name": ...}
         "to":   [{"email": to_address, "name": customer_name}],
-        "subject": f"{doc_title} de tu compra en {biz_name} — #{order_ref}",
+        "subject": subject,
         "html": template.render(
             customer_name=customer_name,
             business_name=biz_name,
             business_logo_url=logo_url,
             doc_title=doc_title,
             is_factura=is_factura,
+            unpaid=unpaid,
             order_ref=order_ref,
             **color_vars,
         ),

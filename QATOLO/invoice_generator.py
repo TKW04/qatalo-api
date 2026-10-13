@@ -378,11 +378,29 @@ def business_doc_view(business):
     return view
 
 
+# Estados de orden (strings exactos de customers.py)
+UNPAID_STATUSES = frozenset({"Pendiente de pago", "Pendiente de validación"})
+PAID_STATUSES = frozenset({"Aprobada", "Entregada"})
+# Se puede emitir factura/recibo en cualquier estado salvo Cancelada
+INVOICEABLE_STATUSES = UNPAID_STATUSES | PAID_STATUSES
+
+
+def is_unpaid_status(status):
+    """True si la orden aún no está pagada (documento 'por cobrar')."""
+    return (status or "").strip() in UNPAID_STATUSES
+
+
+def is_invoiceable(status):
+    """True si se permite emitir factura/recibo para una orden en este estado."""
+    return (status or "").strip() in INVOICEABLE_STATUSES
+
+
 def build_invoice_pdf(business, customer, items, totals, meta):
     primary = _hex_to_rgb((business.get("themePalette") or {}).get("primary"), (17, 63, 103))
     accent = _hex_to_rgb((business.get("themePalette") or {}).get("secondary"), (52, 105, 154))
 
     is_factura = meta.get("invoice_type") == "factura"
+    unpaid = is_unpaid_status(meta.get("status"))
     symbol = meta.get("currency", "")
 
     pdf = _InvoicePDF(primary, accent, format="A4")
@@ -431,8 +449,20 @@ def build_invoice_pdf(business, customer, items, totals, meta):
     pdf.set_fill_color(*primary)
     pdf.set_text_color(255, 255, 255)
     pdf.set_font("Helvetica", "B", 12)
-    title = "FACTURA" if is_factura else "RECIBO DE PAGO"
+    if is_factura:
+        title = "FACTURA"
+    else:
+        title = "FACTURA INFORMAL" if unpaid else "RECIBO DE PAGO"
     pdf.cell(box_w, 9, title, align="C", fill=True, ln=2)
+
+    if unpaid:
+        # Sello bien visible bajo el título: la orden aún no está pagada
+        pdf.set_x(box_x)
+        pdf.set_draw_color(180, 35, 24)
+        pdf.set_line_width(0.6)
+        pdf.set_text_color(180, 35, 24)
+        pdf.set_font("Helvetica", "B", 10)
+        pdf.cell(box_w, 7, "PENDIENTE DE PAGO", border=1, align="C", ln=2)
 
     pdf.set_x(box_x)
     pdf.set_text_color(*primary)
@@ -576,10 +606,17 @@ def build_invoice_pdf(business, customer, items, totals, meta):
     pdf.set_text_color(80, 80, 80)
     if meta.get("payment_method"):
         pdf.cell(0, 5, f"Método de pago: {meta.get('payment_method')}", ln=1)
-    if meta.get("status"):
+    if unpaid:
+        pdf.cell(0, 5, "Estado: Por cobrar", ln=1)
+    elif meta.get("status"):
         pdf.cell(0, 5, f"Estado: {meta.get('status')}", ln=1)
 
-    if not is_factura:
+    if not is_factura and unpaid:
+        pdf.ln(3)
+        pdf.set_font("Helvetica", "I", 8)
+        pdf.set_text_color(140, 140, 140)
+        pdf.multi_cell(0, 4, "Documento sin valor fiscal. Pendiente de pago.")
+    elif not is_factura:
         pdf.ln(3)
         pdf.set_font("Helvetica", "I", 8)
         pdf.set_text_color(140, 140, 140)

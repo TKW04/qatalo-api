@@ -36,6 +36,8 @@ from invoice_generator import (
     build_invoice_pdf,
     business_doc_view,
     calc_invoice_totals,
+    is_invoiceable,
+    is_unpaid_status,
     safe_filename_part,
 )
 
@@ -76,8 +78,8 @@ DATE_FMT = "%Y-%m-%d %H:%M:%S"
 
 INVOICE_BUCKET = os.getenv("BUCKET_NAME")
 
-# Estados en los que se permite facturar
-INVOICEABLE_STATUSES = {"Aprobada", "Entregada"}
+# Estados en los que se permite facturar: ver invoice_generator.INVOICEABLE_STATUSES
+# (Pendiente de pago, Pendiente de validación, Aprobada, Entregada; nunca Cancelada)
 
 
 # ----------------- Helpers -----------------
@@ -2470,15 +2472,16 @@ def emit_invoice(event, user_name, user_id):
         if not group_txns:
             return _resp(404, {"message": "Orden no encontrada"})
 
-        # 2) Validar estado (solo Aprobada/Entregada)
+        # 2) Validar estado (cualquiera salvo Cancelada; no pagada → "por cobrar")
         status = group_txns[0].get("status", "")
-        if status not in INVOICEABLE_STATUSES:
+        if not is_invoiceable(status):
             return _resp(
                 400,
                 {
-                    "message": f"Solo se puede facturar una orden Aprobada o Entregada (estado actual: {status})"
+                    "message": f"No se puede facturar una orden en estado {status or 'desconocido'}"
                 },
             )
+        unpaid = is_unpaid_status(status)
 
         # 3) Cargar negocio (el business_id vive en el CLIENTE, no en la transacción)
         business_id = customer.get("business_id", "")
@@ -2490,6 +2493,7 @@ def emit_invoice(event, user_name, user_id):
 
         # 4) Manejo de NCF (solo si es factura)
         assigned_ncf = ""
+        ncf_pool_to_commit = None  # pool a persistir solo si el PDF se generó y subió
         if with_ncf:
             if not business.get("ncf_enabled", False):
                 return _resp(400, {"message": "Este negocio no tiene NCF habilitado"})
@@ -2539,15 +2543,9 @@ def emit_invoice(event, user_name, user_id):
                     entry["used_in"] = order_group
                     entry["used_date"] = _ncf_date()
 
-                # Guardar el pool actualizado en el negocio
-                business_table.update_item(
-                    Key={"business_id": business_id},
-                    UpdateExpression="SET ncf_pool=:p",
-                    ExpressionAttributeValues={":p": pool},
-                )
-
-                # Persistir el NCF en las transacciones del grupo
-                _assign_ncf_to_order(customer, order_group, assigned_ncf)
+                # El pool y el NCF de la orden se persisten tras generar y subir
+                # el PDF (paso 8b): si algo falla antes, el NCF no queda consumido.
+                ncf_pool_to_commit = pool
 
         # 5) Construir items para el cálculo
         raw_items = []
@@ -2618,6 +2616,15 @@ def emit_invoice(event, user_name, user_id):
             ContentType="application/pdf",
         )
 
+        # 8b) Consumir el NCF (pool del negocio + transacciones de la orden)
+        if ncf_pool_to_commit is not None:
+            business_table.update_item(
+                Key={"business_id": business_id},
+                UpdateExpression="SET ncf_pool=:p",
+                ExpressionAttributeValues={":p": ncf_pool_to_commit},
+            )
+            _assign_ncf_to_order(customer, order_group, assigned_ncf)
+
         # 9) Acción: email o download
         if action == "email":
             if not customer_data["email"]:
@@ -2631,6 +2638,7 @@ def emit_invoice(event, user_name, user_id):
                     order_ref=meta["order_ref"],
                     pdf_bytes=pdf_bytes,
                     doc_label=doc_label,
+                    unpaid=unpaid,
                 )
                 return _resp(
                     200,
