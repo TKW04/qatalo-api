@@ -335,6 +335,49 @@ class _InvoicePDF(FPDF):
         self.cell(0, 5, "Generado con Qatalo  -  qatalo.online", align="C")
 
 
+def format_cedula(value):
+    """11 dígitos -> 001-1234567-8; cualquier otra cosa se devuelve tal cual."""
+    digits = "".join(ch for ch in str(value or "") if ch.isdigit())
+    if len(digits) == 11:
+        return f"{digits[:3]}-{digits[3:10]}-{digits[10]}"
+    return str(value or "").strip()
+
+
+def _issuer_lines(business):
+    """Líneas 'Emitido por' / 'Cédula|RNC' del emisor de recibos sin NCF."""
+    name = pdf_safe_text(business.get("issuer_name") or business.get("issuerName")).strip()
+    id_num = pdf_safe_text(business.get("issuer_id") or business.get("issuerId")).strip()
+    id_type = str(business.get("issuer_id_type") or business.get("issuerIdType") or "cedula").lower()
+    lines = []
+    if name:
+        lines.append(f"Emitido por: {name[:60]}")
+    if id_num:
+        if id_type == "rnc":
+            lines.append(f"RNC: {id_num[:20]}")
+        else:
+            lines.append(f"Cédula: {format_cedula(id_num)}")
+    return lines
+
+
+_BUSINESS_DOC_ALIASES = (
+    ("name", "business_name"),
+    ("phone", "business_phone"),
+    ("themePalette", "theme_palette"),
+    ("logo_url", "business_logo_url"),
+)
+
+
+def business_doc_view(business):
+    """Copia del item crudo de DynamoDB con las claves que leen el PDF y el
+    correo (name/phone/themePalette/logo_url). No quita claves originales ni
+    pisa valores ya presentes."""
+    view = dict(business or {})
+    for key, raw_key in _BUSINESS_DOC_ALIASES:
+        if not view.get(key) and view.get(raw_key):
+            view[key] = view[raw_key]
+    return view
+
+
 def build_invoice_pdf(business, customer, items, totals, meta):
     primary = _hex_to_rgb((business.get("themePalette") or {}).get("primary"), (17, 63, 103))
     accent = _hex_to_rgb((business.get("themePalette") or {}).get("secondary"), (52, 105, 154))
@@ -374,6 +417,12 @@ def build_invoice_pdf(business, customer, items, totals, meta):
     if business.get("rnc"):
         pdf.cell(0, 5, f"RNC: {business.get('rnc')}", ln=1)
         pdf.set_x(text_x)
+    if not is_factura:
+        # Emisor del recibo informal (solo sin NCF). Acepta el item crudo de
+        # DynamoDB (snake_case) o el dict del cliente (camelCase).
+        for line in _issuer_lines(business):
+            pdf.cell(0, 5, line, ln=1)
+            pdf.set_x(text_x)
 
     # ── Caja de tipo de comprobante (derecha) ──
     box_w = 62

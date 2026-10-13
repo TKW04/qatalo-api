@@ -32,7 +32,12 @@ from SendMails.mails import (
     invoice_email,
 )
 
-from invoice_generator import build_invoice_pdf, calc_invoice_totals, safe_filename_part
+from invoice_generator import (
+    build_invoice_pdf,
+    business_doc_view,
+    calc_invoice_totals,
+    safe_filename_part,
+)
 
 from offers import reserve_offer_use, release_offer_use
 
@@ -2596,8 +2601,9 @@ def emit_invoice(event, user_name, user_id):
             "email": customer.get("email", ""),
         }
 
-        # 7) Generar PDF
-        pdf_bytes = build_invoice_pdf(business, customer_data, items_calc, totals, meta)
+        # 7) Generar PDF (item crudo de DynamoDB → claves que leen PDF y correo)
+        biz_doc = business_doc_view(business)
+        pdf_bytes = build_invoice_pdf(biz_doc, customer_data, items_calc, totals, meta)
 
         doc_label = "factura" if with_ncf else "recibo"
         # Nombre de archivo / clave S3 solo ASCII (independiente de nombres con emoji/acentos)
@@ -2620,7 +2626,7 @@ def emit_invoice(event, user_name, user_id):
                 invoice_email(
                     to_address=customer_data["email"],
                     customer_name=cust_name,
-                    business=business,
+                    business=biz_doc,
                     invoice_type=meta["invoice_type"],
                     order_ref=meta["order_ref"],
                     pdf_bytes=pdf_bytes,

@@ -41,6 +41,37 @@ def _owner_sub_status(user_id):
         return ""
 
 
+ISSUER_ID_TYPES = ("cedula", "rnc")
+ISSUER_NAME_MAX = 120
+ISSUER_ID_MAX = 20
+_ISSUER_KEYS = ("issuerName", "issuerId", "issuerIdType", "issuer_name", "issuer_id", "issuer_id_type")
+
+
+def _clean_issuer(data):
+    """Emisor de facturas informales (recibos sin NCF). Devuelve (campos, error).
+    Cédula: 11 dígitos (acepta 001-1234567-8) y se guarda solo con dígitos.
+    RNC: sin validar formato (solo trim y longitud máxima)."""
+    def pick(camel, snake, default=""):
+        v = data.get(camel, data.get(snake))
+        return default if v is None else str(v).strip()
+
+    name = pick("issuerName", "issuer_name")
+    id_type = (pick("issuerIdType", "issuer_id_type") or "cedula").lower()
+    id_num = pick("issuerId", "issuer_id")
+    if id_type not in ISSUER_ID_TYPES:
+        return None, "Tipo de documento del emisor inválido (cedula o rnc)"
+    if len(name) > ISSUER_NAME_MAX:
+        return None, f"El nombre del emisor no puede superar {ISSUER_NAME_MAX} caracteres"
+    if id_type == "cedula" and id_num:
+        digits = id_num.replace("-", "").replace(" ", "")
+        if not (digits.isdigit() and len(digits) == 11):
+            return None, "La cédula del emisor debe tener 11 dígitos"
+        id_num = digits
+    if len(id_num) > ISSUER_ID_MAX:
+        return None, f"El documento del emisor no puede superar {ISSUER_ID_MAX} caracteres"
+    return {"issuer_name": name, "issuer_id": id_num, "issuer_id_type": id_type}, None
+
+
 CORS = {"Access-Control-Allow-Origin": "*"}
 
 
@@ -142,6 +173,10 @@ def get_business_by_user_id(user_id: str):
                 "ncf_enabled": bool(item.get("ncf_enabled", False)),
                 "itbis_rate": _num(item.get("itbis_rate"), 18.0, float),
                 "ncf_pool": item.get("ncf_pool", []) or [],
+                # Emisor de recibos sin NCF (no se expone en el catálogo público)
+                "issuerName": item.get("issuer_name", "") or "",
+                "issuerId": item.get("issuer_id", "") or "",
+                "issuerIdType": item.get("issuer_id_type", "cedula") or "cedula",
                 "delivery_reminder_enabled": bool(
                     item.get("delivery_reminder_enabled", False)
                 ),
@@ -251,6 +286,9 @@ def get_business_by_slug(slug: str):
 def create_business(event, user_name, user_id):
     try:
         data = json.loads(event["body"])
+        issuer, issuer_err = _clean_issuer(data)
+        if issuer_err:
+            return _resp(400, {"message": issuer_err})
         if business_table.scan(
             FilterExpression=Attr("business_slug").eq(data.get("slug"))
         ).get("Items"):
@@ -279,6 +317,7 @@ def create_business(event, user_name, user_id):
             "ncf_enabled": bool(data.get("ncf_enabled", False)),
             "itbis_rate": Decimal(str(_num(data.get("itbis_rate"), 18, float))),
             "ncf_pool": data.get("ncf_pool", []) or [],
+            **issuer,
             # Tipografía y logo
             "font_heading": data.get("fontHeading", "default"),
             "font_body": data.get("fontBody", "default"),
@@ -307,6 +346,19 @@ def update_business(event, user_id, business_id):
         existing = business_table.get_item(Key={"business_id": business_id}).get("Item")
         if not existing or existing.get("user_id") != user_id:
             return _resp(404, {"message": "Negocio no encontrado"})
+        # Emisor: solo se toca si el cliente lo envía (clientes que no conocen
+        # estos campos, p. ej. la app iOS actual, no los borran al guardar).
+        issuer_set, issuer_vals = "", {}
+        if any(k in data for k in _ISSUER_KEYS):
+            issuer, issuer_err = _clean_issuer(data)
+            if issuer_err:
+                return _resp(400, {"message": issuer_err})
+            issuer_set = ", issuer_name=:isn, issuer_id=:isi, issuer_id_type=:ist"
+            issuer_vals = {
+                ":isn": issuer["issuer_name"],
+                ":isi": issuer["issuer_id"],
+                ":ist": issuer["issuer_id_type"],
+            }
         business_table.update_item(
             Key={"business_id": business_id},
             UpdateExpression=(
@@ -319,6 +371,7 @@ def update_business(event, user_id, business_id):
                 "font_heading=:fh, font_body=:fb, font_scale=:fs, logo_scale=:ls, "
                 "custom_fonts=:cf, business_hours_enabled=:bhe, hours_mode=:hm, "
                 "business_hours=:bh, locality_hours=:lh, product_settings=:ps, custom_style=:cs"
+                + issuer_set
             ),
             ExpressionAttributeValues={
                 ":n": data.get("name"),
@@ -350,6 +403,7 @@ def update_business(event, user_id, business_id):
                 ":lh": data.get("locality_hours", {}) or {},
                 ":ps": data.get("product_settings", {"out_of_stock": "normal", "home_mode": "all"}) or {"out_of_stock": "normal", "home_mode": "all"},
                 ":cs": data.get("custom_style", {}) or {},
+                **issuer_vals,
             },
         )
         return _resp(200, {"message": "Negocio actualizado"})
