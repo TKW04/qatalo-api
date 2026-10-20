@@ -123,6 +123,9 @@ def _parse_range(params):
 
 
 def _in_range(day, date_from, date_to):
+    # Solo la parte YYYY-MM-DD: "2026-12-31 23:59:59" o isoformat cuentan dentro de to=2026-12-31
+    # (to es inclusivo del día completo).
+    day = (day or "")[:10] if isinstance(day, str) else ""
     if not day:
         return False
     if date_from and day < date_from:
@@ -335,7 +338,7 @@ def production_report(business_id, params):
         r = rows.get(product_id)
         if r is None:
             r = rows[product_id] = {"product_id": product_id, "product_name": name or "",
-                                    "produced": 0, "sold": 0}
+                                    "produced": 0, "sold": 0, "active": False}
         elif not r["product_name"] and name:
             r["product_name"] = name
         return r
@@ -354,8 +357,7 @@ def production_report(business_id, params):
             # Las transacciones canceladas no cuentan como vendidas (misma convención que customers.py).
             if tx.get("status") == "Cancelada":
                 continue
-            day = (tx.get("create_date", "") or "")[:10]
-            if not _in_range(day, date_from, date_to):
+            if not _in_range(tx.get("create_date", ""), date_from, date_to):
                 continue
             pid = tx.get("product_id", "")
             if not pid:
@@ -363,12 +365,16 @@ def production_report(business_id, params):
             row(pid, tx.get("product_name", ""))["sold"] += _to_int(tx.get("quantity", 0))
 
     # Nombre actual del producto cuando existe (los registros guardan el nombre histórico).
+    # "active" = is_available == "available" (Disponible); un producto eliminado cuenta como inactivo.
     if rows:
         products = _scan_all(products_table, FilterExpression=Attr("business_id").eq(business_id))
         for p in products:
             r = rows.get(p.get("product_id", ""))
-            if r is not None and p.get("product_name"):
+            if r is None:
+                continue
+            if p.get("product_name"):
                 r["product_name"] = p["product_name"]
+            r["active"] = p.get("is_available") == "available"
 
     items = []
     totals = {"produced": 0, "sold": 0, "difference": 0}

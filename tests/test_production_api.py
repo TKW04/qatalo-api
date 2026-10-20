@@ -260,10 +260,56 @@ class ProductionApiTest(unittest.TestCase):
         by_id = {i["product_id"]: i for i in data["items"]}
         self.assertEqual(set(by_id), {"p1", "p3"})
         self.assertEqual(by_id["p1"], {"product_id": "p1", "product_name": "Pan", "produced": 15, "sold": 3,
-                                       "difference": 12})  # la cancelada (2) no cuenta
+                                       "difference": 12, "active": True})  # la cancelada (2) no cuenta
         self.assertEqual(by_id["p3"], {"product_id": "p3", "product_name": "Galleta", "produced": 0, "sold": 4,
-                                       "difference": -4})
+                                       "difference": -4, "active": False})  # producto inexistente = inactivo
         self.assertEqual(data["totals"], {"produced": 15, "sold": 7, "difference": 8})
+
+    def test_report_year_includes_whole_dec_31(self):
+        self._create(pid="p1", qty=7, date="2026-12-31")
+        self._create(pid="p1", qty=1, date="2027-01-01")  # fuera
+        self.logs.put_item({"business_id": "b1", "log_id": "lx", "product_id": "p1", "product_name": "Pan",
+                            "quantity": Decimal(2), "date": "2026-12-31T22:00:00"})
+        self.customers.put_item({"customer_id": "c1", "business_id": "b1", "transactions": [
+            {"product_id": "p1", "quantity": Decimal(3), "create_date": "2026-12-31 23:59:59", "status": "Entregada"},
+            {"product_id": "p1", "quantity": Decimal(4), "create_date": "2026-12-31T23:59:59.999999-04:00",
+             "status": "Entregada"},
+            {"product_id": "p1", "quantity": Decimal(5), "create_date": "2026-01-01 00:00:00", "status": "Entregada"},
+            {"product_id": "p1", "quantity": Decimal(60), "create_date": "2027-01-01 00:00:00", "status": "Entregada"},
+            {"product_id": "p1", "quantity": Decimal(70), "create_date": "2025-12-31 23:59:59", "status": "Entregada"},
+        ]})
+        status, data = self._route("/production/report", "GET", params={"from": "2026-01-01", "to": "2026-12-31"})
+        self.assertEqual(status, 200)
+        self.assertEqual(data["totals"], {"produced": 9, "sold": 12, "difference": -3})
+
+    def test_report_active_flag(self):
+        self._create(pid="p1", qty=2, date="2026-10-01")  # queda available
+        self._create(pid="p2", qty=1, date="2026-10-01")
+        self.products.items[("p2",)]["is_available"] = "unavailable"
+        _, data = self._route("/production/report", "GET", params={"from": "2026-10-01", "to": "2026-10-31"})
+        by_id = {i["product_id"]: i for i in data["items"]}
+        self.assertTrue(by_id["p1"]["active"])
+        self.assertFalse(by_id["p2"]["active"])
+
+    def test_report_active_uses_stored_is_available_values(self):
+        # Valores reales que guardan products.py / customers.py: "available" | "unavailable" | ausente.
+        self.products.put_item({"product_id": "pa", "business_id": "b1", "product_name": "A", "quantity": Decimal(3),
+                                "is_available": "available"})
+        self.products.put_item({"product_id": "pu", "business_id": "b1", "product_name": "U", "quantity": Decimal(0),
+                                "is_available": "unavailable"})
+        self.products.put_item({"product_id": "pn", "business_id": "b1", "product_name": "N", "quantity": Decimal(1)})
+        # Solo ventas (sin fabricación) para no alterar is_available vía create_production.
+        self.customers.put_item({"customer_id": "c1", "business_id": "b1", "transactions": [
+            {"product_id": pid, "quantity": Decimal(1), "create_date": "2026-03-01 10:00:00", "status": "Entregada"}
+            for pid in ("pa", "pu", "pn", "gone")
+        ]})
+        _, data = self._route("/production/report", "GET", params={"from": "2026-01-01", "to": "2026-12-31"})
+        by_id = {i["product_id"]: i for i in data["items"]}
+        for it in data["items"]:
+            self.assertIsInstance(it["active"], bool)
+        self.assertEqual({pid: by_id[pid]["active"] for pid in by_id},
+                         {"pa": True, "pu": False, "pn": False, "gone": False})
+        self.assertEqual(by_id["pa"]["product_name"], "A")
 
     def test_report_empty(self):
         status, data = self._route("/production/report", "GET", params={"from": "2026-10-01", "to": "2026-10-31"})
