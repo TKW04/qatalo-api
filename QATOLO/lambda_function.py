@@ -14,7 +14,7 @@ from users import users_routes
 from paddle import paddle_routes
 from categories import categories_routes
 from offers import offers_routes
-from production import production_routes
+from production import production_routes, reports_routes
 from recipes import recipes_routes
 from delivery_reminder import run_delivery_reminders
 from suggestions import suggestions_routes
@@ -166,6 +166,9 @@ def lambda_handler(event, context):
         # Bitácora de producción (antes de "products": rutas /{alias}/production...)
         if path.startswith(f"/{alias}/production"):
             return production_routes(path=path, method=method, event=event, user_name=user_name, user_id=user_id, alias=alias)
+        # Dashboard de admin (solo lectura, dueño del negocio)
+        if path.startswith(f"/{alias}/reports"):
+            return reports_routes(path=path, method=method, event=event, user_name=user_name, user_id=user_id, alias=alias)
         # Recetas (solo control de costos; no tocan stock)
         if path.startswith(f"/{alias}/recipes"):
             return recipes_routes(path=path, method=method, event=event, user_name=user_name, user_id=user_id, alias=alias)

@@ -9,6 +9,7 @@ import time
 import random
 
 import boto3
+from botocore.exceptions import ClientError
 import json
 import os
 import uuid
@@ -152,52 +153,168 @@ def _catalog_url(business):
     return f"{FRONT_END_URL}/catalog/{business.get('business_slug', '')}"
 
 
+# Estados de una línea en los que su cantidad YA está descontada del inventario.
+# Invariante: stock descontado <=> status en _STOCK_STATUSES.
+_STOCK_STATUSES = ("Aprobada", "Entregada")
+
+
+class InsufficientStockError(Exception):
+    def __init__(self, product_name, available, requested):
+        super().__init__(f"Stock insuficiente de {product_name}")
+        self.product_name = product_name
+        self.available = available
+        self.requested = requested
+
+
+def _stock_error_resp(product_name, available, requested, action="aprobar"):
+    return _resp(400, {
+        "error": "stock_insuficiente",
+        "product_name": product_name,
+        "available": available,
+        "requested": requested,
+        "message": f"No hay stock suficiente de \"{product_name}\" para {action}.",
+    })
+
+
+def _line_stock(m):
+    """(product_id, variant_id, cantidad) de una línea de transacción."""
+    return (
+        m.get("product_id", ""),
+        (m.get("variant") or {}).get("variant_id"),
+        int(m.get("quantity", 1) or 1),
+    )
+
+
+def _stock_shortage(lines, action="aprobar"):
+    """Valida (solo lectura) que haya stock para descontar `lines` [(m, qty)].
+    Agrupa por producto/variante. Devuelve la respuesta 400 o None."""
+    needed = {}
+    for m, qty in lines:
+        pid, vid, _ = _line_stock(m)
+        if not pid or qty <= 0:
+            continue
+        key = (pid, vid)
+        name, total = needed.get(key, (m.get("product_name", ""), 0))
+        needed[key] = (name, total + qty)
+    for (pid, vid), (name, qty) in needed.items():
+        product = products_table.get_item(Key={"product_id": pid}).get("Item")
+        if not product:
+            continue  # producto borrado: _adjust_stock lo ignora igual
+        if vid:
+            variant = next((v for v in product.get("variants", [])
+                            if v.get("variant_id") == vid), None)
+            if not variant:
+                continue
+            stock = int(variant.get("quantity", 0))
+        else:
+            stock = int(product.get("quantity", 0))
+        if stock < qty:
+            return _stock_error_resp(name or product.get("product_name", ""), stock, qty, action)
+    return None
+
+
+def _apply_stock_and_save(customer, transactions, changes):
+    """Aplica los ajustes de stock [(product_id, variant_id, delta)] y guarda las
+    transacciones. Si un ajuste o el guardado falla, revierte los ajustes ya
+    aplicados (best-effort) y relanza la excepción: nunca queda stock movido sin
+    que el pedido refleje el nuevo estado."""
+    email = customer.get("email", "")
+    applied = []
+    try:
+        for pid, vid, delta in changes:
+            _adjust_stock(pid, delta, email, variant_id=vid)
+            applied.append((pid, vid, delta))
+        _save_transactions(customer["customer_id"], transactions, email)
+    except Exception:
+        for pid, vid, delta in reversed(applied):
+            try:
+                _adjust_stock(pid, -delta, email, variant_id=vid)
+            except Exception as rb_err:
+                print(json.dumps({
+                    "event": "stock_rollback", "product_id": pid,
+                    "variant_id": vid, "delta": -delta, "Error": str(rb_err),
+                }))
+        raise
+
+
 def _adjust_stock(product_id, delta, updated_by, variant_id=None):
+    """Suma `delta` al stock del producto/variante con escritura condicional
+    (bloqueo optimista sobre la cantidad leída, reintenta ante concurrencia).
+    Un descuento que dejaría stock negativo lanza InsufficientStockError y no escribe."""
     if not product_id or delta == 0:
         return
-    product = products_table.get_item(Key={"product_id": product_id}).get("Item")
-    if not product:
-        return
-
-    if variant_id:
-        variants = product.get("variants", [])
-        old_total = sum(int(v.get("quantity", 0)) for v in variants)
-        updated = False
-        for v in variants:
-            if v.get("variant_id") == variant_id:
-                v["quantity"] = max(0, int(v.get("quantity", 0)) + delta)
-                updated = True
-                break
-        if updated:
-            new_total = sum(int(v.get("quantity", 0)) for v in variants)
-            new_available = "unavailable" if new_total == 0 else "available"
-            products_table.update_item(
-                Key={"product_id": product_id},
-                UpdateExpression="SET #var=:v, is_available=:av, update_date=:ud, update_user=:uu",
-                ExpressionAttributeNames={"#var": "variants"},
-                ExpressionAttributeValues={
-                    ":v": variants,
+    for _attempt in range(3):
+        product = products_table.get_item(Key={"product_id": product_id}).get("Item")
+        if not product:
+            return
+        name = product.get("product_name", "")
+        try:
+            if variant_id:
+                variants = product.get("variants", [])
+                idx = next((i for i, v in enumerate(variants)
+                            if v.get("variant_id") == variant_id), None)
+                if idx is None:
+                    return
+                old_total = sum(int(v.get("quantity", 0)) for v in variants)
+                has_q = "quantity" in variants[idx]
+                old_q = int(variants[idx].get("quantity", 0))
+                new_q = old_q + delta
+                if new_q < 0:
+                    raise InsufficientStockError(name, old_q, -delta)
+                new_total = old_total + delta
+                new_available = "unavailable" if new_total == 0 else "available"
+                path = f"#var[{idx}]"
+                values = {
+                    ":q": new_q,
+                    ":vid": variant_id,
                     ":av": new_available,
                     ":ud": _now(),
                     ":uu": updated_by,
-                },
-            )
-            _check_stock_alerts(product, old_total, new_total)  # ← nuevo
-    else:
-        old_qty = int(product.get("quantity", 0))
-        new_qty = max(0, old_qty + delta)
-        new_available = "unavailable" if new_qty == 0 else "available"
-        products_table.update_item(
-            Key={"product_id": product_id},
-            UpdateExpression="SET quantity=:q, is_available=:av, update_date=:ud, update_user=:uu",
-            ExpressionAttributeValues={
-                ":q": new_qty,
-                ":av": new_available,
-                ":ud": _now(),
-                ":uu": updated_by,
-            },
-        )
-        _check_stock_alerts(product, old_qty, new_qty)  # ← nuevo
+                }
+                if has_q:
+                    q_cond = f"{path}.quantity = :old"
+                    values[":old"] = old_q
+                else:
+                    q_cond = f"attribute_not_exists({path}.quantity)"
+                products_table.update_item(
+                    Key={"product_id": product_id},
+                    UpdateExpression=f"SET {path}.quantity=:q, is_available=:av, update_date=:ud, update_user=:uu",
+                    ConditionExpression=f"{path}.variant_id = :vid AND {q_cond}",
+                    ExpressionAttributeNames={"#var": "variants"},
+                    ExpressionAttributeValues=values,
+                )
+                _check_stock_alerts(product, old_total, new_total)  # ← nuevo
+            else:
+                has_q = "quantity" in product
+                old_qty = int(product.get("quantity", 0))
+                new_qty = old_qty + delta
+                if new_qty < 0:
+                    raise InsufficientStockError(name, old_qty, -delta)
+                new_available = "unavailable" if new_qty == 0 else "available"
+                values = {
+                    ":q": new_qty,
+                    ":av": new_available,
+                    ":ud": _now(),
+                    ":uu": updated_by,
+                }
+                if has_q:
+                    q_cond = "quantity = :old"
+                    values[":old"] = old_qty
+                else:
+                    q_cond = "attribute_not_exists(quantity)"
+                products_table.update_item(
+                    Key={"product_id": product_id},
+                    UpdateExpression="SET quantity=:q, is_available=:av, update_date=:ud, update_user=:uu",
+                    ConditionExpression=q_cond,
+                    ExpressionAttributeValues=values,
+                )
+                _check_stock_alerts(product, old_qty, new_qty)  # ← nuevo
+            return
+        except ClientError as e:
+            if e.response.get("Error", {}).get("Code") != "ConditionalCheckFailedException":
+                raise
+            # Otro proceso cambió el stock entre la lectura y la escritura: reintentar.
+    raise Exception(f"No se pudo actualizar el stock de {product_id} (conflicto de concurrencia)")
 
 
 def _check_stock_alerts(product, old_qty, new_qty):
@@ -1314,9 +1431,22 @@ def approve_transaction(event, user_id=None):
             return _resp(404, {"message": "Transacción no encontrada"})
 
         members = _group_members(transactions, tx)
+        # Solo descuentan las líneas que aún no tenían stock descontado
+        # (idempotente: re-aprobar o aprobar una Entregada no descuenta otra vez).
+        to_deduct = [m for m in members if m.get("status") not in _STOCK_STATUSES]
+        shortage = _stock_shortage([(m, _line_stock(m)[2]) for m in to_deduct])
+        if shortage:
+            return shortage
+        changes = []
         for m in members:
             if m.get("status") != "Aprobada":
+                if m.get("status") not in _STOCK_STATUSES:
+                    pid, vid, qty = _line_stock(m)
+                    changes.append((pid, vid, -qty))
                 m["status"] = "Aprobada"
+                # Fecha real de aprobación (dashboard de ventas); no se sobrescribe.
+                if not m.get("approved_date"):
+                    m["approved_date"] = _now()
                 # Entrega en X días tras el pago: se calcula justo ahora que se confirma,
                 # y solo si el producto/transacción no ya tiene una fecha fija asignada.
                 days_after = int(m.get("delivery_days_after_payment", 0) or 0)
@@ -1324,15 +1454,10 @@ def approve_transaction(event, user_id=None):
                     m["delivery_day"] = (
                         _rd_now() + timedelta(days=days_after)
                     ).strftime("%Y-%m-%d")
-                _adjust_stock(
-                    m.get("product_id", ""),
-                    -int(m.get("quantity", 1) or 1),
-                    customer.get("email", ""),
-                    variant_id=(m.get("variant") or {}).get("variant_id"),
-                )
-        _save_transactions(
-            customer["customer_id"], transactions, customer.get("email", "")
-        )
+        try:
+            _apply_stock_and_save(customer, transactions, changes)
+        except InsufficientStockError as se:
+            return _stock_error_resp(se.product_name, se.available, se.requested)
         business = _get_business(customer.get("business_id", "")) or {}
         owner_email = _owner_email(business)
         try:
@@ -1373,17 +1498,27 @@ def delivered_transaction(event, user_id=None):
         if not tx:
             return _resp(404, {"message": "Transacción no encontrada"})
         members = _group_members(transactions, tx)
-        for m in members:
-            m["status"] = "Entregada"
-            _adjust_stock(
-                m.get("product_id", ""),
-                -int(m.get("quantity", 1) or 1),
-                customer.get("email", ""),
-                variant_id=(m.get("variant") or {}).get("variant_id"),
-            )
-        _save_transactions(
-            customer["customer_id"], transactions, customer.get("email", "")
+        # Aprobada/Entregada ya descontaron stock; solo descuenta una línea que
+        # pasa directo a Entregada sin haber sido aprobada (p. ej. Pendiente de pago).
+        to_deduct = [m for m in members if m.get("status") not in _STOCK_STATUSES]
+        shortage = _stock_shortage(
+            [(m, _line_stock(m)[2]) for m in to_deduct], action="entregar"
         )
+        if shortage:
+            return shortage
+        changes = []
+        for m in to_deduct:
+            pid, vid, qty = _line_stock(m)
+            changes.append((pid, vid, -qty))
+        now = _now()
+        for m in members:
+            if m.get("status") != "Entregada":
+                m["delivered_date"] = now
+            m["status"] = "Entregada"
+        try:
+            _apply_stock_and_save(customer, transactions, changes)
+        except InsufficientStockError as se:
+            return _stock_error_resp(se.product_name, se.available, se.requested, "entregar")
         business = _get_business(customer.get("business_id", "")) or {}
         owner_email = _owner_email(business)
         try:
@@ -1426,21 +1561,18 @@ def cancel_transaction(event, user_id=None):
 
         members = _group_members(transactions, tx)
         reason = body.get("cancellation_reason", "No especificada")
+        changes = []
         for m in members:
             prev = m.get("status")
+            if prev == "Cancelada":
+                continue  # idempotente: no pisar status_before_cancel ni reponer dos veces
             m["status_before_cancel"] = prev   # ← AGREGAR: recordar dónde estaba
             m["status"] = "Cancelada"
             m["cancellation_reason"] = reason
-            if prev in ("Aprobada", "Entregada"):
-                _adjust_stock(
-                    m.get("product_id", ""),
-                    int(m.get("quantity", 1) or 1),
-                    customer.get("email", ""),
-                    variant_id=(m.get("variant") or {}).get("variant_id"),
-                )
-        _save_transactions(
-            customer["customer_id"], transactions, customer.get("email", "")
-        )
+            if prev in _STOCK_STATUSES:
+                pid, vid, qty = _line_stock(m)
+                changes.append((pid, vid, qty))
+        _apply_stock_and_save(customer, transactions, changes)
         business = _get_business(customer.get("business_id", "")) or {}
         owner_email = _owner_email(business)
         try:
@@ -1521,9 +1653,12 @@ def update_transaction(event, user_id=None):
         tx["delivery_day"] = body.get("delivery_day", tx.get("delivery_day", ""))
         old_price = Decimal(str(tx.get("price", 0) or 0))
         old_qty = tx.get("quantity", 1)
+        old_pid, old_vid, old_stock_qty = _line_stock(tx)
         tx["price"] = Decimal(str(body.get("price", tx.get("price", 0)) or 0))
         tx["quantity"] = body.get("quantity", tx.get("quantity", 1))
         tx["product_id"] = body.get("product_id", tx.get("product_id", ""))
+        if "variant" in body:
+            tx["variant"] = body.get("variant") or {}
         tx["product_name"] = body.get("product_name", tx.get("product_name", ""))
         tx["payment_method"] = body.get("payment_method", tx.get("payment_method", {}))
         tx["locality"] = body.get("locality", tx.get("locality", ""))
@@ -1539,9 +1674,25 @@ def update_transaction(event, user_id=None):
         # Descuento de la línea: lo controla el servidor (apply_offer_to_order /
         # checkout). Se ignoran original_price/discount_amount/offer_* del body.
         _reconcile_manual_line_edit(tx, old_price, old_qty)
-        _save_transactions(
-            customer["customer_id"], transactions, customer.get("email", "")
-        )
+        # Línea con stock ya descontado: ajustar inventario por la diferencia
+        # (cantidad) o devolver lo viejo y descontar lo nuevo (producto/variante).
+        changes = []
+        if tx.get("status") in _STOCK_STATUSES:
+            new_pid, new_vid, new_qty = _line_stock(tx)
+            if (new_pid, new_vid) == (old_pid, old_vid):
+                if new_qty != old_stock_qty:
+                    changes.append((new_pid, new_vid, old_stock_qty - new_qty))
+            else:
+                changes.append((new_pid, new_vid, -new_qty))
+                changes.append((old_pid, old_vid, old_stock_qty))
+            extra = [(tx, -d) for p, v, d in changes if d < 0]
+            shortage = _stock_shortage(extra, action="editar la orden")
+            if shortage:
+                return shortage
+        try:
+            _apply_stock_and_save(customer, transactions, changes)
+        except InsufficientStockError as se:
+            return _stock_error_resp(se.product_name, se.available, se.requested, "editar la orden")
         return _resp(200, {"message": "Transacción actualizada correctamente"})
     except Exception as e:
         print(json.dumps({"event": "update_transaction", "Error": str(e)}))
@@ -1593,14 +1744,23 @@ def delete_transaction(event, user_id=None):
         err = _check_owner(customer, user_id)
         if err:
             return err
+        removed = [
+            t
+            for t in customer.get("transactions", [])
+            if t.get("transaction_id", "") == body.get("transaction_id", "")
+        ]
         transactions = [
             t
             for t in customer.get("transactions", [])
             if t.get("transaction_id", "") != body.get("transaction_id", "")
         ]
-        _save_transactions(
-            customer["customer_id"], transactions, customer.get("email", "")
-        )
+        # Reponer el stock que la línea tenía descontado (una Cancelada ya lo repuso).
+        changes = []
+        for t in removed:
+            if t.get("status") in _STOCK_STATUSES:
+                pid, vid, qty = _line_stock(t)
+                changes.append((pid, vid, qty))
+        _apply_stock_and_save(customer, transactions, changes)
         return _resp(200, {"message": "Transacción eliminada correctamente"})
     except Exception as e:
         print(json.dumps({"event": "delete_transaction", "Error": str(e)}))
@@ -1704,20 +1864,22 @@ def reactivate_transaction(event, user_id=None):
                         })
 
         # Reactivar: restaurar estado y reponer descuento de stock si aplica
+        changes = []
         for m in members:
+            if m.get("status") != "Cancelada":
+                continue  # línea del grupo que no estaba cancelada: no tocar
             restore_to = m.get("status_before_cancel", "Pendiente de pago")
             m["status"] = restore_to
             m.pop("cancellation_reason", None)
             m.pop("status_before_cancel", None)
-            if restore_to in ("Aprobada", "Entregada"):
-                _adjust_stock(
-                    m.get("product_id", ""),
-                    -int(m.get("quantity", 1) or 1),
-                    customer.get("email", ""),
-                    variant_id=(m.get("variant") or {}).get("variant_id"),
-                )
+            if restore_to in _STOCK_STATUSES:
+                pid, vid, qty = _line_stock(m)
+                changes.append((pid, vid, -qty))
 
-        _save_transactions(customer["customer_id"], transactions, customer.get("email", ""))
+        try:
+            _apply_stock_and_save(customer, transactions, changes)
+        except InsufficientStockError as se:
+            return _stock_error_resp(se.product_name, se.available, se.requested, "reactivar")
         return _resp(200, {"message": "Orden reactivada"})
     except Exception as e:
         print(json.dumps({"event": "reactivate_transaction", "Error": str(e)}))
@@ -2324,20 +2486,18 @@ def cancel_order_by_token(event):
         reason = body.get(
             "cancellation_reason", "No especificada"
         )  # cliente: "Cancelada por el cliente"
+        changes = []
         for m in members:
             prev = m.get("status")
+            if prev == "Cancelada":
+                continue  # idempotente: no pisar status_before_cancel ni reponer dos veces
+            m["status_before_cancel"] = prev
             m["status"] = "Cancelada"
             m["cancellation_reason"] = reason
-            if prev in ("Aprobada", "Entregada"):
-                _adjust_stock(
-                    m.get("product_id", ""),
-                    int(m.get("quantity", 1) or 1),
-                    customer.get("email", ""),
-                    variant_id=(m.get("variant") or {}).get("variant_id"),
-                )
-        _save_transactions(
-            customer["customer_id"], transactions, customer.get("email", "")
-        )
+            if prev in _STOCK_STATUSES:
+                pid, vid, qty = _line_stock(m)
+                changes.append((pid, vid, qty))
+        _apply_stock_and_save(customer, transactions, changes)
         business = _get_business(customer.get("business_id", "")) or {}
         owner_email = _owner_email(business)
         return order_cancel_email(

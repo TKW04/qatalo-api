@@ -5,6 +5,7 @@ Rutas (mismo prefijo /{alias}/ que /products, requieren sesión del dueño):
   GET    /production?from=&to=&product_id=
   DELETE /production/{log_id}
   GET    /production/report?from=&to=
+  GET    /reports/dashboard?from=&to=   (dashboard de admin: producidos / vendidos / promesas)
 
 Al registrar producción se SUMA `quantity` al stock del producto (nivel producto, sin
 variantes); al borrar un registro se resta (sin bajar de 0).
@@ -386,3 +387,148 @@ def production_report(business_id, params):
     totals["difference"] = totals["produced"] - totals["sold"]
     items.sort(key=lambda r: (r["product_name"].lower(), r["product_id"]))
     return _resp(200, {"items": items, "totals": totals})
+
+
+# ----------------- Dashboard de admin (GET /reports/dashboard?from=&to=) -----------------
+# Trabaja sobre LÍNEAS de pedido (transacciones), no pedidos. No altera /production/report.
+SOLD_STATUSES = ("Aprobada", "Entregada", "Pago Completado")
+EXCLUDED_PROMISE_STATUSES = SOLD_STATUSES + ("Cancelada",)
+
+
+def reports_routes(path, method, event, user_name, user_id, alias):
+    try:
+        biz = _get_biz(user_id)
+        if not biz:
+            return _resp(403, {"message": "No autorizado"})
+        params = event.get("queryStringParameters") or {}
+        if path == f"/{alias}/reports/dashboard" and method == "GET":
+            return dashboard_report(biz.get("business_id", ""), params)
+        return _resp(404, {"message": "Ruta no encontrada"})
+    except ProductionError as e:
+        return _resp(e.status, {"message": str(e)})
+    except Exception as e:
+        print(json.dumps({"event": "reports_routes", "Error": str(e)}))
+        return _resp(500, {"message": str(e)})
+
+
+def _to_dec(v):
+    try:
+        d = Decimal(str(v))
+        return d if d.is_finite() else Decimal(0)
+    except Exception:
+        return Decimal(0)
+
+
+def _num(d):
+    d = Decimal(d).quantize(Decimal("0.01"))
+    return int(d) if d == d.to_integral_value() else float(d)
+
+
+def _money(amounts):
+    return {cur: _num(v) for cur, v in amounts.items()}
+
+
+def _line_currency(tx):
+    return tx.get("currency") or (tx.get("payment_method", {}) or {}).get("currency", "") or ""
+
+
+def dashboard_report(business_id, params):
+    date_from, date_to = _parse_range(params)
+
+    produced = {}
+    for log in _business_logs(business_id):
+        if not _in_range(log.get("date", ""), date_from, date_to) and (date_from or date_to):
+            continue
+        pid = log.get("product_id", "")
+        qty = _to_int(log.get("quantity", 0))
+        if not pid or qty <= 0:
+            continue
+        r = produced.setdefault(pid, {"product_id": pid, "product_name": log.get("product_name", "") or "",
+                                      "quantity": 0})
+        if not r["product_name"] and log.get("product_name"):
+            r["product_name"] = log["product_name"]
+        r["quantity"] += qty
+
+    sold, promises = {}, {}
+
+    def add(groups, tx, customer, day, with_status):
+        qty = _to_int(tx.get("quantity", 0))
+        if qty <= 0:
+            return
+        pid = tx.get("product_id", "")
+        label = tx.get("variant_label", "") or ""
+        price = _to_dec(tx.get("price", 0))
+        cur = _line_currency(tx)
+        status = tx.get("status", "") or ""
+        g = groups.get((pid, label))
+        if g is None:
+            g = groups[(pid, label)] = {"product_id": pid, "product_name": tx.get("product_name", "") or "",
+                                        "variant_label": label, "quantity": 0, "amount": {}, "lines": []}
+            if with_status:
+                g["by_status"] = {}
+        g["quantity"] += qty
+        g["amount"][cur] = g["amount"].get(cur, Decimal(0)) + price * qty
+        if with_status:
+            g["by_status"][status] = g["by_status"].get(status, 0) + qty
+        name = f"{customer.get('given_name', '') or ''} {customer.get('family_name', '') or ''}".strip()
+        g["lines"].append({
+            "transaction_id": tx.get("transaction_id", ""),
+            "order_group": tx.get("order_group", "") or "",
+            "customer_name": name,
+            "quantity": qty,
+            "price": _num(price),
+            "currency": cur,
+            "status": status,
+            "date": day,
+        })
+
+    customers = _scan_all(customers_table, FilterExpression=Attr("business_id").eq(business_id))
+    for customer in customers:
+        if customer.get("business_id") != business_id:
+            continue
+        for tx in customer.get("transactions", []) or []:
+            status = tx.get("status", "")
+            if status in SOLD_STATUSES:
+                # Respaldo para datos antiguos sin approved_date.
+                day = tx.get("approved_date") or tx.get("create_date", "")
+                target, with_status = sold, False
+            elif status != "Cancelada":
+                day = tx.get("create_date", "")
+                target, with_status = promises, True
+            else:
+                continue
+            if (date_from or date_to) and not _in_range(day, date_from, date_to):
+                continue
+            add(target, tx, customer, day or "", with_status)
+
+    def finish(groups):
+        out = []
+        for g in groups.values():
+            g["amount"] = _money(g["amount"])
+            g["lines"].sort(key=lambda l: l["date"], reverse=True)
+            out.append(g)
+        out.sort(key=lambda g: (-g["quantity"], g["product_name"].lower(), g["variant_label"]))
+        return out
+
+    def total_amount(groups):
+        acc = {}
+        for g in groups.values():
+            for cur, v in g["amount"].items():
+                acc[cur] = acc.get(cur, Decimal(0)) + v
+        return _money(acc)
+
+    totals = {
+        "produced_units": sum(r["quantity"] for r in produced.values()),
+        "sold_units": sum(g["quantity"] for g in sold.values()),
+        "sold_amount": total_amount(sold),
+        "promises_units": sum(g["quantity"] for g in promises.values()),
+        "promises_amount": total_amount(promises),
+    }
+    produced_list = sorted(produced.values(), key=lambda r: (-r["quantity"], r["product_name"].lower()))
+    return _resp(200, {
+        "range": {"from": date_from or None, "to": date_to or None},
+        "totals": totals,
+        "produced": produced_list,
+        "sold": finish(sold),
+        "promises": finish(promises),
+    })
