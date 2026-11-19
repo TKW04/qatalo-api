@@ -1,6 +1,30 @@
 # batallo-api
 api del catalogo de QR
 
+## Recuperación de contraseña (`QATOLO/users.py`)
+
+Rutas públicas (sin autorizador Cognito):
+
+- `POST /{alias}/users/forgot-password/{email}` — responde **siempre** 200 con un mensaje genérico (no revela si
+  el correo existe). Si el usuario existe y está habilitado, envía un correo con
+  `${FRONTEND_URL}/reset-password/{token}`. 503 solo si falta `PASSWORD_RESET_SECRET`.
+- `POST /{alias}/users/change-password` — **cambio de contrato**: body `{"token": "...", "password": "..."}`.
+  El usuario se obtiene exclusivamente del token; un campo `username` se ignora (el contrato anterior
+  `{"username", "password"}` permitía cambiar la contraseña de cualquier cuenta y ya no funciona).
+  Respuestas: 200 ok; 400 `{"code": "invalid_token"}` (firma inválida, caducado, usado, usuario inexistente o
+  deshabilitado — mismo mensaje en todos los casos); 400 `{"code": "invalid_password"}` (menos de 8 / más de 256
+  caracteres o rechazada por la política del User Pool); 503 sin secreto; 500 error de Cognito. Tras el cambio se
+  ejecuta `admin_user_global_sign_out` (cierra las sesiones abiertas).
+
+Token: `b64url(payload).b64url(HMAC-SHA256)` con payload `{sub, exp, v}`; caduca a los 60 min y `v` es una huella de
+`UserLastModifiedDate`, que Cognito cambia al fijar la contraseña → el token es de un solo uso y un reset invalida
+los demás enlaces pendientes. Los enlaces antiguos `/reset-password/{sub}` dejan de funcionar. Los logs no incluyen
+correos, subs, tokens ni contraseñas.
+
+| Variable | Uso |
+|---|---|
+| `PASSWORD_RESET_SECRET` | Secreto HMAC de los enlaces de recuperación (≥ 32 caracteres aleatorios, p. ej. `openssl rand -base64 48`). Admite override por alias (`PASSWORD_RESET_SECRET_PROD`). **Obligatoria**: sin ella forgot/change-password responden 503 (falla cerrado). Rotarla invalida los enlaces pendientes. |
+
 ## Bitácora de producción (`QATOLO/production.py`)
 
 Rutas: `POST/GET /production`, `DELETE /production/{log_id}`, `GET /production/report`.
