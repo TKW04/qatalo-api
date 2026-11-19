@@ -12,6 +12,7 @@ from products import products_routes
 from business import business_routes
 from users import users_routes
 from paddle import paddle_routes
+from revenuecat import revenuecat_routes
 from categories import categories_routes
 from offers import offers_routes
 from production import production_routes, reports_routes
@@ -38,6 +39,8 @@ ACTIVE_SUB_STATUSES = {"active", "trialing"}
 # Se comparan por substring contra el path.
 WRITE_ALLOW_WHEN_INACTIVE = (
     "/paddle",       # todo el flujo de pago/suscripción
+    "/revenuecat/webhook",  # webhook de RevenueCat (Apple IAP)
+    "/subscription/sync",   # la app refresca el estado tras una compra in-app
     "/users",        # login, forgot/change password, etc.
     "/team",         # contacto
     "/suggestions",  # feedback (opcional; quítalo si prefieres bloquearlo)
@@ -151,6 +154,9 @@ def lambda_handler(event, context):
         if path == f"/{alias}/users/me" and method == "DELETE":
             return account_deletion.handle_delete_request(event, context, alias)
 
+        # Suscripciones Apple vía RevenueCat (webhook + sync desde la app)
+        if path in (f"/{alias}/revenuecat/webhook", f"/{alias}/subscription/sync"):
+            return revenuecat_routes(event, method=method, path=path, user_id=user_id, alias=alias)
         if "/root/" in path:
             return root_routes(path=path, method=method, event=event, alias=alias)
         if "paddle" in path:

@@ -239,8 +239,35 @@ def paid_event(payload, status):
                 transaction_status=status, customer_id=customer_id, due_date=due_date)
 
 
+def _apple_sub_active(user_id):
+    """True si el usuario tiene una suscripción de Apple (RevenueCat) vigente en Cognito."""
+    from datetime import datetime, timezone
+    try:
+        user = cognito.admin_get_user(UserPoolId=USER_POOL_ID, Username=user_id)
+    except Exception as e:  # si no se puede leer, se mantiene el comportamiento previo
+        print(json.dumps({"event": "_apple_sub_active", "Error": str(e)}))
+        return False
+    attrs = {a['Name']: a['Value'] for a in user.get('UserAttributes', [])}
+    if not (attrs.get('custom:transaction_id') or '').startswith('apple:'):
+        return False
+    if attrs.get('custom:transaction_status') not in ('active', 'trialing'):
+        return False
+    due = attrs.get('custom:due_date') or ''
+    if not due:
+        return True
+    try:
+        return datetime.fromisoformat(due.replace('Z', '+00:00')) > datetime.now(timezone.utc)
+    except ValueError:
+        return True
+
+
 def update_user(user_id, transaction_id, transaction_status, customer_id, due_date):
     try:
+        # Un evento Paddle que desactiva no pisa una suscripción de Apple vigente.
+        if transaction_status not in ('active', 'trialing') and _apple_sub_active(user_id):
+            print(json.dumps({"event": "update_user", "skipped": "apple_sub_active",
+                              "status": transaction_status}))
+            return
         if user_id != "d4d85418-c0d1-7094-162f-4fa2ed7c20bb":
             # Ejecutar la actualización en Cognito
             userAttributes = [
