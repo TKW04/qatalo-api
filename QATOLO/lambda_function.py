@@ -20,6 +20,7 @@ from recipes import recipes_routes
 from delivery_reminder import run_delivery_reminders
 from suggestions import suggestions_routes
 from root import root_routes
+from app_config import app_config_routes
 import account_deletion
 
 cognito = boto3.client("cognito-idp")
@@ -131,6 +132,10 @@ def lambda_handler(event, context):
         path = event.get('rawPath', '')
         method = event.get('requestContext', {}).get(
             'http', {}).get('method', '')
+
+        # --- Config pública de la app móvil (actualización obligatoria). Sin JWT ni guard 402. ---
+        if path == f"/{alias}/app/config":
+            return app_config_routes(method, CORS)
 
         # --- Endpoint de estado de suscripción (fresco desde Cognito) ---
         if "/subscription/status" in path and method == "GET":

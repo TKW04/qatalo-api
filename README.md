@@ -121,3 +121,50 @@ Deploy (perfil `--profile BMCargo --region us-east-1`; la API invoca el alias `P
    `aws lambda update-alias --function-name <NOMBRE> --name Prod --function-version "$NEW"` (todos con
    `--profile BMCargo --region us-east-1`).
 4. Enviar el evento TEST desde RevenueCat y revisar CloudWatch (`revenuecat.webhook`).
+
+## Actualización obligatoria de la app (`QATOLO/app_config.py`)
+
+`GET /{alias}/app/config` — **pública** (sin JWT, sin authorizer de API Gateway, sin guard 402). La app iOS
+compara su build nativo (`CFBundleVersion`) con `ios.minBuild` al arrancar y al volver a primer plano: si es
+menor, muestra una pantalla bloqueante "Actualización requerida" con botón a la App Store.
+
+```json
+{
+  "ios": {"minBuild": 0, "latestBuild": null, "storeUrl": "https://apps.apple.com/app/id6820258202"},
+  "android": {"minBuild": null, "latestBuild": null, "storeUrl": null}
+}
+```
+
+Header `Cache-Control: public, max-age=300`. Métodos distintos de GET → 405.
+
+Valores (caché en memoria de la Lambda de 5 min):
+
+| Parámetro SSM (String) | Campo | Fallback si falta/SSM falla |
+|---|---|---|
+| `/qatalo/app/ios_min_build` | `ios.minBuild` | env `APP_IOS_MIN_BUILD`, si no `0` |
+| `/qatalo/app/ios_latest_build` | `ios.latestBuild` (opcional, informativo) | env `APP_IOS_LATEST_BUILD`, si no `null` |
+
+Fail-open: un error de SSM o un valor no numérico nunca bloquea (minBuild = fallback, normalmente 0). La app
+también es fail-open (timeout 5 s, sin red o respuesta inválida → no bloquea).
+
+Despliegue (perfil `--profile BMCargo --region us-east-1`):
+
+1. IAM: al rol de ejecución de la Lambda añadir `ssm:GetParameters` y `ssm:GetParameter` sobre
+   `arn:aws:ssm:us-east-1:<ACCOUNT_ID>:parameter/qatalo/app/*` (parámetros `String`, sin KMS).
+2. Crear el mínimo inicial (0 = no bloquea a nadie):
+   `aws ssm put-parameter --name /qatalo/app/ios_min_build --type String --value 0`
+   (opcional: `/qatalo/app/ios_latest_build` con el último build publicado).
+3. API Gateway `enoo1ip7ga`: crear la ruta `GET /app/config` **sin autorizador** con la integración `uq3hm9q`
+   (la misma Lambda `:Prod`):
+   `aws apigatewayv2 create-route --api-id enoo1ip7ga --route-key "GET /app/config" --target integrations/uq3hm9q`
+   (si el stage no tiene auto-deploy, `aws apigatewayv2 create-deployment --api-id enoo1ip7ga --stage-name Prod`).
+4. Subir el código, `publish-version` y mover el alias `Prod` (ver pasos de RevenueCat arriba).
+5. Comprobar: `curl https://enoo1ip7ga.execute-api.us-east-1.amazonaws.com/Prod/app/config`.
+
+Subir el mínimo (fuerza a actualizar a todos los builds menores; tarda hasta ~5 min por la caché de la Lambda,
+más hasta 10 min por el throttle de la app al volver a primer plano). Hazlo **solo cuando el build nuevo ya esté
+disponible en la App Store**:
+
+`aws ssm put-parameter --name /qatalo/app/ios_min_build --type String --value <BUILD> --overwrite`
+
+Para desactivar el bloqueo: mismo comando con `--value 0`.
