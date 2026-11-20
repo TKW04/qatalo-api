@@ -11,6 +11,10 @@ Diseño (la Lambda tiene timeout corto → borrado por pasos reanudables):
   2. Si no termina, se re-invoca a sí misma en asíncrono ({"source": "qatalo.account_deletion"})
      y cada invocación sigue donde quedó. La regla diaria (EventBridge) retoma lo que haya quedado
      colgado y reintenta la cancelación de Paddle fallida.
+     Solo se reencadena si la invocación se quedó sin tiempo (máx. MAX_HOPS saltos); si un paso
+     FALLA no se reencadena (evita bucles recursivos): lo reintenta el siguiente barrido diario.
+     Tras MAX_FAILED_ATTEMPTS fallos seguidos sin avanzar el registro queda status=failed
+     (se conserva para revisión manual; el barrido ya no lo toma).
   3. Todos los pasos son idempotentes (re-ejecutarlos no hace daño).
 
 Pasos (en orden):
@@ -68,7 +72,8 @@ CONFIRM_WORD = "ELIMINAR"
 WORKER_SOURCE = "qatalo.account_deletion"
 RECORD_PREFIX = "account_deletion#"
 RETENTION_PREFIX = "legal_retention#"
-MAX_HOPS = 25                 # re-invocaciones encadenadas máximas por petición/barrido
+MAX_HOPS = 10                 # re-invocaciones encadenadas máximas por petición/barrido
+MAX_FAILED_ATTEMPTS = 5       # intentos fallidos seguidos (sin avanzar) → status=failed
 PADDLE_MAX_ATTEMPTS = 3       # luego queda en "manual"
 SAFETY_MARGIN_MS = 1200       # no empezar trabajo nuevo con menos tiempo que esto
 DEFAULT_BUDGET_MS = 25000     # si no hay context (tests / invocación local)
@@ -91,6 +96,25 @@ PADDLE_CANCELABLE = ("active", "trialing", "past_due", "paused")
 
 class StepIncomplete(Exception):
     """Se acabó el tiempo a mitad de un paso; se retoma en la siguiente invocación."""
+
+
+def _is_permanent_error(e):
+    """Errores que no se arreglan reintentando (permisos, petición inválida): ClientError 4xx o
+    AccessDenied. Throttling / 429 / 5xx / timeouts se consideran transitorios."""
+    name = type(e).__name__
+    resp = getattr(e, "response", None)
+    code, http = "", 0
+    if isinstance(resp, dict):
+        code = str((resp.get("Error") or {}).get("Code", "") or "")
+        try:
+            http = int((resp.get("ResponseMetadata") or {}).get("HTTPStatusCode") or 0)
+        except (TypeError, ValueError):
+            http = 0
+    if "AccessDenied" in name or "AccessDenied" in code or code in ("Forbidden", "UnauthorizedOperation"):
+        return True
+    if "Throttl" in code or "Throttl" in name or "SlowDown" in code or http == 429:
+        return False
+    return 400 <= http < 500
 
 
 class PaddleError(Exception):
@@ -805,8 +829,15 @@ STEP_FUNCS = {
 }
 
 
-def process(record, budget, notify=None):
-    """Ejecuta los pasos pendientes mientras haya tiempo. Devuelve True si terminó."""
+def process(record, budget, notify=None, outcome=None):
+    """Ejecuta los pasos pendientes mientras haya tiempo. Devuelve True si terminó.
+
+    Si se pasa `outcome` (dict), se rellena con failed_step/permanent cuando un paso falla en esta
+    invocación, para que quien llama NO reencadene (el barrido diario lo reintenta). Cada fallo
+    suma failed_attempts; al llegar a MAX_FAILED_ATTEMPTS el registro queda status=failed (no se
+    borra). Un paso completado reinicia el contador."""
+    if outcome is None:
+        outcome = {}
     ctx = {"notify": notify}
     done = record.setdefault("steps_done", [])
     for step in STEPS:
@@ -822,13 +853,29 @@ def process(record, budget, notify=None):
             _log("paused", deletion_id=record["deletion_id"], step=step)
             return False
         except Exception as e:
+            permanent = _is_permanent_error(e)
             record["last_error"] = f"{step}:{type(e).__name__}"
+            record["last_error_permanent"] = permanent
+            record["failed_attempts"] = int(record.get("failed_attempts", 0) or 0) + 1
             _bump(record, "errors", 1)
+            outcome.update(failed_step=step, permanent=permanent)
+            if record["failed_attempts"] >= MAX_FAILED_ATTEMPTS:
+                record["status"] = "failed"
+                record["failed_at"] = _now_iso()
             _save(record)
-            _log("step_failed", deletion_id=record["deletion_id"], step=step, error=type(e).__name__)
+            _log("step_failed", deletion_id=record["deletion_id"], step=step, error=type(e).__name__,
+                 permanent=permanent, attempts=record["failed_attempts"])
+            if record.get("status") == "failed":
+                _log("marked_failed", deletion_id=record["deletion_id"], step=step,
+                     error=record["last_error"], attempts=record["failed_attempts"])
             return False
         done.append(step)
         record.pop("last_error", None)
+        record.pop("last_error_permanent", None)
+        record["failed_attempts"] = 0
+        if record.get("status") == "failed":  # reintento manual que vuelve a avanzar
+            record["status"] = "in_progress"
+            record.pop("failed_at", None)
         _save(record)
         _log("step_done", deletion_id=record["deletion_id"], step=step,
              counts=record.get("counts", {}))
@@ -937,11 +984,15 @@ def handle_delete_request(event, context, alias):
             if email:
                 notify = {"email": email, "name": name}
 
-        done = process(record, Budget(context), notify=notify)
+        outcome = {}
+        done = process(record, Budget(context), notify=notify, outcome=outcome)
         if done:
             _log("completed", deletion_id=deletion_id, counts=record.get("counts", {}),
                  paddle=(record.get("paddle") or {}).get("state"))
             return _resp(200, _public_status(record))
+        if outcome.get("failed_step"):
+            # Un paso falló: no se reencadena (evita bucles); el barrido diario lo reintenta.
+            return _resp(202, _public_status(record))
         pending_notify = notify if notify and not record.get("email_sent") and "notify" not in record.get("steps_done", []) else None
         _invoke_continuation(context, deletion_id, 1, pending_notify)
         return _resp(202, _public_status(record))
@@ -958,13 +1009,20 @@ def handle_worker_event(event, context):
     if not record:
         _log("worker_no_record", deletion_id=deletion_id)
         return {"ok": False}
-    if record.get("status") == "completed":
-        return {"ok": True, "status": "completed"}
-    done = process(record, Budget(context), notify=event.get("notify"))
-    if not done and hop < MAX_HOPS:
+    if record.get("status") in ("completed", "failed"):
+        return {"ok": True, "status": record.get("status")}
+    outcome = {}
+    done = process(record, Budget(context), notify=event.get("notify"), outcome=outcome)
+    if done:
+        return {"ok": True, "status": record.get("status")}
+    if outcome.get("failed_step"):
+        # Reencadenar tras un fallo solo repetiría el mismo error (p. ej. AccessDenied) en bucle.
+        _log("worker_stopped_on_failure", deletion_id=deletion_id, hop=hop,
+             step=outcome["failed_step"], permanent=outcome.get("permanent", False))
+    elif hop < MAX_HOPS:
         notify = event.get("notify") if "notify" not in record.get("steps_done", []) else None
         _invoke_continuation(context, deletion_id, hop + 1, notify)
-    elif not done:
+    else:
         _log("worker_hops_exhausted", deletion_id=deletion_id, step_error=record.get("last_error", ""))
     return {"ok": True, "status": record.get("status")}
 
@@ -978,8 +1036,11 @@ def resume_pending(context=None):
         for rec in _scan_all(records_table, flt, budget):
             if rec.get("record_type") != "account_deletion":
                 continue
+            if rec.get("status") == "failed":
+                continue  # agotó MAX_FAILED_ATTEMPTS: requiere revisión manual (no se borra)
             if rec.get("status") != "completed":
-                if not process(rec, budget):
+                outcome = {}
+                if not process(rec, budget, outcome=outcome) and not outcome.get("failed_step"):
                     _invoke_continuation(context, rec["deletion_id"], 1)
                 resumed += 1
             elif (rec.get("paddle") or {}).get("state") == "retry" and budget.ok(3000):
