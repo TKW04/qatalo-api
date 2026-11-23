@@ -513,6 +513,112 @@ class ResumableTests(unittest.TestCase):
             hw.assert_not_called()
 
 
+class AccessDenied(Exception):
+    """Como el ClientError modelado de botocore para S3 AccessDenied."""
+
+    def __init__(self):
+        super().__init__("AccessDenied")
+        self.response = {"Error": {"Code": "AccessDenied"}, "ResponseMetadata": {"HTTPStatusCode": 403}}
+
+
+class FailureLoopTests(unittest.TestCase):
+    """Un paso que falla siempre (p. ej. S3 AccessDenied) no debe autoinvocar la Lambda en bucle."""
+
+    def _stuck_at_business(self):
+        w = World()
+        real = w.s3.list_objects_v2
+
+        def list_objects_v2(Bucket, Prefix, **kw):
+            if Prefix.startswith((f"business/{SUB}_", f"invoices/")):
+                raise AccessDenied()
+            return real(Bucket, Prefix, **kw)
+
+        w.s3.list_objects_v2 = list_objects_v2
+        return w
+
+    def test_request_does_not_chain_after_failure(self):
+        w = self._stuck_at_business()
+        status, data = w.delete()
+        self.assertEqual(status, 202)
+        w.lambda_client.invoke.assert_not_called()
+        rec = w.record()
+        self.assertEqual(rec["last_error"], "business:AccessDenied")
+        self.assertTrue(rec["last_error_permanent"])
+        self.assertEqual(rec["failed_attempts"], 1)
+
+    def test_worker_does_not_chain_after_failure(self):
+        w = self._stuck_at_business()
+        w.delete()
+        out = w.run(ad.handle_worker_event, {"source": ad.WORKER_SOURCE,
+                                             "deletion_id": ad.deletion_id_for(SUB), "hop": 1}, Ctx())
+        self.assertEqual(out["status"], "in_progress")
+        w.lambda_client.invoke.assert_not_called()
+        self.assertEqual(w.record()["failed_attempts"], 2)
+
+    def test_sweep_does_not_chain_after_failure(self):
+        w = self._stuck_at_business()
+        w.delete()
+        w.run(ad.resume_pending, Ctx())
+        w.lambda_client.invoke.assert_not_called()
+
+    def test_marked_failed_after_max_attempts_and_kept(self):
+        w = self._stuck_at_business()
+        w.delete()  # intento 1
+        for _ in range(ad.MAX_FAILED_ATTEMPTS - 1):
+            w.run(ad.resume_pending, Ctx())
+        rec = w.record()
+        self.assertEqual(rec["status"], "failed")
+        self.assertEqual(rec["failed_attempts"], ad.MAX_FAILED_ATTEMPTS)
+        self.assertIn("failed_at", rec)
+        # el barrido ya no lo toma y el worker tampoco; el registro se conserva
+        w.run(ad.resume_pending, Ctx())
+        self.assertEqual(w.record()["failed_attempts"], ad.MAX_FAILED_ATTEMPTS)
+        out = w.run(ad.handle_worker_event, {"source": ad.WORKER_SOURCE,
+                                             "deletion_id": ad.deletion_id_for(SUB)}, Ctx())
+        self.assertEqual(out["status"], "failed")
+        self.assertIsNotNone(w.record())
+        w.lambda_client.invoke.assert_not_called()
+
+    def test_progress_resets_attempts(self):
+        w = self._stuck_at_business()
+        w.delete()
+        w.s3.list_objects_v2 = FakeS3.list_objects_v2.__get__(w.s3)  # permisos arreglados
+        w.run(ad.resume_pending, Ctx())
+        rec = w.record()
+        self.assertEqual(rec["status"], "completed")
+        self.assertNotIn("last_error", rec)
+        self.assertNotIn(B1, w.business.items)
+
+    def test_respects_max_hops(self):
+        self.assertEqual(ad.MAX_HOPS, 10)
+        w = World()
+        # Sin tiempo: process no avanza pero tampoco falla → reencadena hasta MAX_HOPS
+        with mock.patch.object(ad.Budget, "ok", lambda self, need_ms=0: False):
+            w.delete()
+            w.lambda_client.reset_mock()
+            ev = {"source": ad.WORKER_SOURCE, "deletion_id": ad.deletion_id_for(SUB),
+                  "hop": ad.MAX_HOPS - 1}
+            w.run(ad.handle_worker_event, ev, Ctx())
+            w.lambda_client.invoke.assert_called_once()
+            self.assertEqual(json.loads(w.lambda_client.invoke.call_args.kwargs["Payload"])["hop"],
+                             ad.MAX_HOPS)
+            w.lambda_client.reset_mock()
+            ev["hop"] = ad.MAX_HOPS
+            w.run(ad.handle_worker_event, ev, Ctx())
+            w.lambda_client.invoke.assert_not_called()
+
+    def test_permanent_error_classification(self):
+        self.assertTrue(ad._is_permanent_error(AccessDenied()))
+        e = Exception("x")
+        e.response = {"Error": {"Code": "ThrottlingException"}, "ResponseMetadata": {"HTTPStatusCode": 400}}
+        self.assertFalse(ad._is_permanent_error(e))
+        e.response = {"Error": {"Code": "InternalError"}, "ResponseMetadata": {"HTTPStatusCode": 500}}
+        self.assertFalse(ad._is_permanent_error(e))
+        e.response = {"Error": {"Code": "ValidationException"}, "ResponseMetadata": {"HTTPStatusCode": 400}}
+        self.assertTrue(ad._is_permanent_error(e))
+        self.assertFalse(ad._is_permanent_error(RuntimeError("boom")))
+
+
 class OwnershipUnitTests(unittest.TestCase):
     def test_is_owned_key(self):
         own = dict(sub=SUB, business_ids=[B1], product_ids=[P1], customer_ids=[C1])
